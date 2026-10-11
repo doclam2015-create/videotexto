@@ -2,6 +2,7 @@ import Cocoa
 import WebKit
 import Network
 import UniformTypeIdentifiers
+import Speech
 
 // Glosa para macOS: ventana nativa con WKWebView. La interfaz se sirve desde un pequeño servidor local
 // (http://127.0.0.1:47613) para que los reproductores de YouTube funcionen, y habla con el Mac por
@@ -105,9 +106,9 @@ struct ProcResult { let out: String; let err: String; let code: Int32 }
 
 func which(_ exe: String) -> String? { binPaths.map { $0 + "/" + exe }.first { fm.isExecutableFile(atPath: $0) } }
 
-func run(_ exe: String, _ args: [String], timeout: TimeInterval = 900, onLine: ((String) -> Void)? = nil) throws -> ProcResult {
+func run(_ exe: String, _ args: [String], timeout: TimeInterval = 900, stdin: String? = nil, onLine: ((String) -> Void)? = nil) throws -> ProcResult {
     guard let bin = which(exe) else {
-        throw NSError(domain: "glosa", code: 1, userInfo: [NSLocalizedDescriptionKey: "Falta «\(exe)». Instálalo con: brew install yt-dlp ffmpeg"])
+        throw NSError(domain: "glosa", code: 1, userInfo: [NSLocalizedDescriptionKey: ["codex", "gemini"].contains(exe) ? "No encontré «\(exe)» en este Mac. Instálalo e inicia sesión con tu cuenta." : "Falta «\(exe)». Instálalo con: brew install yt-dlp ffmpeg"])
     }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: bin)
@@ -117,6 +118,9 @@ func run(_ exe: String, _ args: [String], timeout: TimeInterval = 900, onLine: (
     p.environment = env
     let outP = Pipe(), errP = Pipe()
     p.standardOutput = outP; p.standardError = errP
+    let inP = Pipe()
+    if stdin != nil { p.standardInput = inP }
+    p.currentDirectoryURL = support
     var out = Data(), err = Data(), pending = ""
     let lock = NSLock()
     outP.fileHandleForReading.readabilityHandler = { h in
@@ -129,6 +133,7 @@ func run(_ exe: String, _ args: [String], timeout: TimeInterval = 900, onLine: (
     }
     errP.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; lock.lock(); err.append(d); lock.unlock() }
     try p.run()
+    if let s = stdin { inP.fileHandleForWriting.write(Data(s.utf8)); try? inP.fileHandleForWriting.close() }
     let deadline = Date().addingTimeInterval(timeout)
     while p.isRunning { if Date() > deadline { p.terminate(); break }; Thread.sleep(forTimeInterval: 0.1) }
     p.waitUntilExit()
@@ -165,6 +170,19 @@ func httpGet(_ s: String) -> Data? {
     let sem = DispatchSemaphore(value: 0); var out: Data?
     URLSession.shared.dataTask(with: u) { d, _, _ in out = d; sem.signal() }.resume()
     _ = sem.wait(timeout: .now() + 30); return out
+}
+
+// Junta todas las frases reconocidas de un archivo (el reconocedor entrega una por cada pausa)
+final class SpeechCollector: NSObject, SFSpeechRecognitionTaskDelegate {
+    var words: [SFTranscriptionSegment] = []
+    let done = DispatchSemaphore(value: 0)
+    func speechRecognitionTask(_ task: SFSpeechRecognitionTask, didFinishRecognition r: SFSpeechRecognitionResult) {
+        let segs = r.bestTranscription.segments
+        // evita duplicar si el reconocedor entrega el texto acumulado
+        if let f = segs.first, let l = words.last, f.timestamp <= l.timestamp { words.removeAll { $0.timestamp >= f.timestamp } }
+        words += segs
+    }
+    func speechRecognitionTask(_ task: SFSpeechRecognitionTask, didFinishSuccessfully ok: Bool) { done.signal() }
 }
 
 // MARK: - aplicación
@@ -227,6 +245,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         if webView === printView { return }
         pageReady = true
+        // pruebas automáticas: GLOSA_EVAL=archivo.js ejecuta código en la página, imprime el resultado y cierra
+        if let f = ProcessInfo.processInfo.environment["GLOSA_EVAL"], let code = try? String(contentsOfFile: f, encoding: .utf8) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                self.web.callAsyncJavaScript(code, arguments: [:], in: nil, in: .page) { r in
+                    switch r { case .success(let v): print("EVAL", v as Any); case .failure(let e): print("EVAL ERROR", e) }
+                    fflush(stdout); exit(0)
+                }
+            }
+        }
         if let u = pendingURL { pendingURL = nil; DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { self.openLink(u) } }
     }
     func evt(_ obj: [String: Any]) {
@@ -299,6 +326,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                 } catch { fail(error.localizedDescription) }
             }
 
+        case "cli":
+            // respaldo con tus cuentas (ChatGPT vía Codex o Google vía Gemini CLI) cuando la API no funciona
+            let provider = b["provider"] as? String ?? "codex", prompt = b["prompt"] as? String ?? ""
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    if provider == "gemini" {
+                        let r = try run("gemini", ["-p", "Responde a lo anterior."], timeout: 900, stdin: prompt)
+                        if r.code != 0 && r.out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { fail("Gemini CLI: " + String(r.err.suffix(300))); return }
+                        reply(r.out.trimmingCharacters(in: .whitespacesAndNewlines))
+                    } else {
+                        let outFile = fm.temporaryDirectory.appendingPathComponent("glosa-codex-\(UUID().uuidString).txt")
+                        let r = try run("codex", ["exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "--color", "never", "-o", outFile.path, "-"], timeout: 900, stdin: prompt)
+                        let out = (try? String(contentsOf: outFile, encoding: .utf8)) ?? ""
+                        try? fm.removeItem(at: outFile)
+                        if out.isEmpty && r.code != 0 { fail("ChatGPT (Codex): " + String(r.err.suffix(300))); return }
+                        reply((out.isEmpty ? r.out : out).trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                } catch { fail(error.localizedDescription) }
+            }
+
+        case "localtranscribe":
+            // transcripción gratuita en el propio Mac con el dictado de Apple (solo audio)
+            let id = (b["id"] as? String ?? UUID().uuidString).replacingOccurrences(of: "/", with: "-")
+            let url = b["url"] as? String ?? "", media = b["media"] as? String ?? "", lang = b["lang"] as? String ?? "es"
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    var input: URL
+                    if media.hasPrefix("/media/") {
+                        input = mediaDir.appendingPathComponent(String(media.dropFirst(7)).removingPercentEncoding ?? "")
+                    } else {
+                        var path = ""
+                        let r = try run("yt-dlp", ["--no-playlist", "--no-warnings", "--newline", "-f", "ba/b", "-x", "--audio-format", "m4a",
+                                                   "--progress-template", "download:GLOSA %(progress._percent_str)s", "--print", "after_move:filepath",
+                                                   "-o", mediaDir.path + "/\(id)-audio.%(ext)s"] + authArgs(b) + [url], timeout: 3600) { line in
+                            if line.hasPrefix("GLOSA") { self.evt(["type": "dl", "id": id, "pct": Double(line.dropFirst(6).trimmingCharacters(in: CharacterSet(charactersIn: " %"))) ?? 0]) }
+                            else if line.hasPrefix("/") { path = line }
+                        }
+                        if path.isEmpty { fail("No se pudo descargar el audio: " + cleanErr(r.err)); return }
+                        input = URL(fileURLWithPath: path)
+                    }
+                    let segs = try AppDelegate.speechTranscribe(input, lang: lang) { p in self.evt(["type": "tr", "id": id, "pct": p]) }
+                    if segs.isEmpty { fail("El dictado de Apple no reconoció voz en el audio."); return }
+                    reply(segs)
+                } catch { fail(error.localizedDescription) }
+            }
+
         case "login":
             openLogin(b["url"] as? String ?? "", replyHandler)
 
@@ -349,6 +422,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         default:
             replyHandler(nil, "Operación desconocida: \(op)")
         }
+    }
+
+    // Divide el audio en trozos de 55 s y los transcribe en el dispositivo; agrupa las palabras en frases con su tiempo
+    static func speechTranscribe(_ file: URL, lang: String, progress: @escaping (Double) -> Void) throws -> [[String: Any]] {
+        let sem0 = DispatchSemaphore(value: 0); var status = SFSpeechRecognizerAuthorizationStatus.notDetermined
+        SFSpeechRecognizer.requestAuthorization { st in status = st; sem0.signal() }
+        sem0.wait()
+        guard status == .authorized else { throw NSError(domain: "glosa", code: 4, userInfo: [NSLocalizedDescriptionKey: "Permite el Reconocimiento de voz para Glosa en Ajustes del Sistema › Privacidad y seguridad."]) }
+        let locales = (lang.hasPrefix("en") ? ["en-US", "en-GB"] : lang.hasPrefix("pt") ? ["pt-BR", "pt-PT"] : lang.hasPrefix("fr") ? ["fr-FR"] : lang.hasPrefix("de") ? ["de-DE"] : lang.hasPrefix("it") ? ["it-IT"] : ["es-CL", "es-ES", "es-MX", "es-US"])
+        guard let rec = locales.compactMap({ SFSpeechRecognizer(locale: Locale(identifier: $0)) }).first(where: { $0.isAvailable }) else {
+            throw NSError(domain: "glosa", code: 5, userInfo: [NSLocalizedDescriptionKey: "El reconocimiento de voz para «\(lang)» no está disponible en este Mac."])
+        }
+        let dir = fm.temporaryDirectory.appendingPathComponent("glosa-tr-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let cut = try run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", file.path, "-vn", "-ac", "1", "-ar", "16000", "-f", "segment", "-segment_time", "55", "-c:a", "pcm_s16le", dir.path + "/p%04d.wav"], timeout: 1800)
+        let parts = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasSuffix(".wav") }.sorted()
+        if parts.isEmpty { throw NSError(domain: "glosa", code: 6, userInfo: [NSLocalizedDescriptionKey: "No se pudo preparar el audio: " + cut.err.suffix(200)]) }
+        var out: [[String: Any]] = []
+        for (i, name) in parts.enumerated() {
+            let base = Double(i) * 55
+            let req = SFSpeechURLRecognitionRequest(url: dir.appendingPathComponent(name))
+            if rec.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
+            req.addsPunctuation = true
+            req.shouldReportPartialResults = false
+            let del = SpeechCollector()
+            let task = rec.recognitionTask(with: req, delegate: del)
+            if del.done.wait(timeout: .now() + 240) == .timedOut { task.cancel() }
+            let words = del.words
+            var cur = "", start = -1.0, last = 0.0, n = 0
+            func flush() { let t = cur.trimmingCharacters(in: .whitespaces); if !t.isEmpty { out.append(["t": base + max(0, start), "s": "", "x": t]) }; cur = ""; start = -1; n = 0 }
+            for w in words {
+                if start >= 0 && w.timestamp - last > 1.2 { flush() }
+                if start < 0 { start = w.timestamp }
+                cur += (cur.isEmpty ? "" : " ") + w.substring; n += 1
+                last = w.timestamp + w.duration
+                if let c = w.substring.last, ".?!".contains(c), n > 4 { flush() } else if n >= 28 { flush() }
+            }
+            flush()
+            progress(100 * Double(i + 1) / Double(parts.count))
+        }
+        return out
     }
 
     // Subtítulos de YouTube (manuales primero; automáticos en el idioma original si no hay)

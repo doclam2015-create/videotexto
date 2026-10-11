@@ -133,7 +133,7 @@ function step(v, text, pct) {
 async function startInput(input, opts = {}) {
   const src = Engine.parse(input);
   if (!src) { toast('Pega un enlace válido de YouTube o de una página web con video', 'err'); return; }
-  if (!S.key) { toast('Primero agrega tu clave gratuita de Gemini', 'err'); App.settings(); return; }
+  if (!S.key && !native) { toast('Primero agrega tu clave gratuita de Gemini', 'err'); App.settings(); return; }
   // enlaces que pueden tener varios videos o pedir inicio de sesión: se exploran antes
   if (src.kind === 'web' && !opts.single) {
     const found = await discover(src, opts.cred);
@@ -325,7 +325,18 @@ async function runPipeline(v, src, signal) {
     View.refresh(v);
 
     // ---------- 2. transcripción ----------
-    if (!v.segments.length) await transcribe(v, media, signal, onWait);
+    if (!v.segments.length) {
+      if (native && (!S.key || media?.local)) await localTranscribe(v, media);
+      else {
+        try { await transcribe(v, media, signal, onWait); }
+        catch (e) {
+          if (e.name === 'AbortError' || !native || v.kind === 'file') throw e;
+          onWait('La API de Gemini no funcionó (' + String(e.message).slice(0, 70) + '); transcribo en el Mac');
+          v.segments = []; v.screen = [];
+          await localTranscribe(v, media);
+        }
+      }
+    }
     if (!v.segments.length) throw new Error('No se encontró voz que transcribir en el video.');
     v.lang = v.lang || '';
     await saveV(v);
@@ -403,12 +414,15 @@ async function webSource(v, src, signal, onWait) {
       Object.assign(v, { title: m.title || v.title, channel: m.uploader || m.channel || domainOf(src.url), description: m.description || '', duration: m.duration || 0, thumb: m.thumbnail || '', published: m.upload_date ? m.upload_date.replace(/(\d{4})(\d\d)(\d\d)/, '$1-$2-$3') : '', mediaUrl: r.media, pageUrl: m.webpage_url || src.url });
       if (m.chapters?.length) v.chaptersDesc = m.chapters.map(c => ({ t: c.start_time, title: c.title }));
       step(v, 'Preparando el video…', 9);
-      const blob = await (await fetch(r.media)).blob();
+      const blob = S.key ? await (await fetch(r.media)).blob() : null;
       if (!v.duration) v.duration = await mediaDuration(r.media);
+      if (!S.key) return { local: r.media };
       step(v, 'Subiendo a Gemini…', 10);
-      const f = await Engine.upload(blob, v.title, p => step(v, `Subiendo a Gemini… ${Math.round(p * 100)} %`, 10 + p * 6), signal);
-      v.file = f;
-      return f;
+      try {
+        const f = await Engine.upload(blob, v.title, p => step(v, `Subiendo a Gemini… ${Math.round(p * 100)} %`, 10 + p * 6), signal);
+        v.file = f;
+        return f;
+      } catch (e) { if (e.name === 'AbortError') throw e; return { local: r.media }; }
     } catch (e) {
       if (e.name === 'AbortError') throw e;
       onWait(`El Mac no pudo descargarlo (${String(e.message || e).slice(0, 80)}); busco el video en la página…`);
@@ -465,6 +479,26 @@ async function redirectYT(v, id, extra) {
   View.v = View.v?.id === v.id ? nv : View.v;
   Jobs.queue.unshift(signal => runPipeline(nv, { kind: 'yt', id, url: nv.url }, signal));
   if (View.v?.id === nv.id) View.open(nv.id);
+}
+
+// Respaldo en el Mac: subtítulos de YouTube si existen; si no, dictado de Apple en el propio equipo (gratis, sin tokens)
+async function localTranscribe(v, media) {
+  if (v.kind === 'yt') {
+    step(v, 'Buscando subtítulos de YouTube…', 18);
+    const r = await bridge('ytinfo', { id: v.ytId, subs: true }).catch(() => null);
+    if (r?.subs?.length) { v.segments = r.subs; v.subsSource = r.subsLang; v.localTr = 'subs'; return; }
+  }
+  step(v, 'Transcribiendo en el Mac con el dictado de Apple…', 20);
+  const off = e => {
+    if (e.id !== v.id) return;
+    if (e.type === 'dl') step(v, `Descargando audio… ${Math.round(e.pct)} %`, 15 + e.pct * 0.08);
+    if (e.type === 'tr') step(v, `Transcribiendo en el Mac (dictado de Apple)… ${Math.round(e.pct)} %`, 24 + e.pct * 0.66);
+  };
+  nativeListeners.add(off);
+  try {
+    v.segments = await bridge('localtranscribe', { id: v.id, url: v.kind === 'yt' ? v.url : (v.pageUrl || v.url || ''), media: media?.local || v.mediaUrl || '', lang: (v.lang || S.lang || 'es').slice(0, 2) });
+    v.localTr = 'apple';
+  } finally { nativeListeners.delete(off); }
 }
 
 async function transcribe(v, media, signal, onWait) {
@@ -1415,7 +1449,9 @@ const App = {
         field('Tamaño de cada parte', sel('chunk', [[600, '10 min — más preciso'], [1200, '20 min — recomendado'], [1800, '30 min — ahorra cuota gratuita']], true), 'Los videos largos se dividen y se transcriben en paralelo.'),
         field('Partes en paralelo', sel('conc', [[1, '1 (cuenta gratuita, más estable)'], [2, '2 (recomendado)'], [3, '3'], [4, '4 (cuenta con facturación)']], true)),
         field('Lectura de pantalla', sel('res', [['low', 'Normal — más rápido y económico'], ['std', 'Detallada — lee mejor texto pequeño y enlaces']])),
-        native ? field('Fuente en el Mac', sel('src', [['ai', 'IA: audio + texto en pantalla + hablantes'], ['subs', 'Subtítulos de YouTube si existen (instantáneo)']])) : null),
+        native ? field('Fuente en el Mac', sel('src', [['ai', 'IA: audio + texto en pantalla + hablantes'], ['subs', 'Subtítulos de YouTube si existen (instantáneo)']])) : null,
+        native ? field('Si la API no funciona (Mac)', sel('fallback', [['codex', 'Usar mi cuenta de ChatGPT (Codex)'], ['gemini', 'Usar mi cuenta de Google (Gemini CLI)'], ['off', 'No usar respaldo']]),
+          'La transcripción pasa a los subtítulos de YouTube o al dictado de Apple en este Mac (gratis, solo audio: sin hablantes ni texto en pantalla). El resumen, el chat y lo demás usan tu cuenta.') : null),
       h('section', {}, h('h3', { html: icon('eye') + ' Apariencia' }),
         field('Tema', sel('theme', [['auto', 'Automático'], ['dark', 'Oscuro'], ['light', 'Claro']])),
         field('Tamaño del texto', h('input', { type: 'range', min: 13, max: 26, value: S.font, oninput: e => { saveSettings({ font: +e.target.value }); applyTheme(); } })),

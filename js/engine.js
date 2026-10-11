@@ -20,7 +20,31 @@ const Engine = {
   },
 
   // ---------- Gemini ----------
-  async gem({ parts, schema, tools, maxTokens = 16000, thinking = 0, media = false, model, signal, onWait, system }) {
+  // En el Mac, si la API falla, las tareas de texto pasan a tus cuentas (ChatGPT vía Codex o Gemini CLI)
+  async gem(o) {
+    const textOnly = !o.tools && !JSON.stringify(o.parts).includes('file_data');
+    const canCli = native && S.fallback !== 'off' && textOnly;
+    if (!S.key && canCli) return this.cli(o);
+    try { return await this.gemApi(o); }
+    catch (e) {
+      if (e.name === 'AbortError' || !canCli) throw e;
+      o.onWait?.('La API no respondió (' + String(e.message).slice(0, 60) + '); uso tu cuenta de ' + (S.fallback === 'gemini' ? 'Google' : 'ChatGPT'));
+      return this.cli(o);
+    }
+  },
+
+  async cli({ parts, schema, system, onWait }) {
+    const turns = parts[0]?.role
+      ? parts.map(t => (t.role === 'user' ? 'USUARIO: ' : 'ASISTENTE: ') + t.parts.map(p => p.text || '').join('\n')).join('\n\n')
+      : parts.map(p => p.text || '').join('\n');
+    let prompt = (system ? system + '\n\n' : '') + turns;
+    if (schema) prompt += '\n\nResponde ÚNICAMENTE con un JSON válido (sin texto antes ni después, sin bloques de código) que siga este esquema JSON: ' + JSON.stringify(schema);
+    onWait?.('Usando tu cuenta de ' + (S.fallback === 'gemini' ? 'Google (Gemini CLI)' : 'ChatGPT (Codex)') + '…');
+    const text = await bridge('cli', { provider: S.fallback === 'gemini' ? 'gemini' : 'codex', prompt });
+    return { text: String(text || ''), finish: 'STOP' };
+  },
+
+  async gemApi({ parts, schema, tools, maxTokens = 16000, thinking = 0, media = false, model, signal, onWait, system }) {
     if (!S.key) throw new Error('Falta tu clave gratuita de Gemini. Ábrela en Ajustes (es gratis en aistudio.google.com).');
     // la cuota gratuita es por modelo y por día: si uno se agota se pasa al siguiente de la cadena
     const chain = [...new Set([model || S.model, ...MODEL_CHAIN])].filter(m => !Quota.out(m));

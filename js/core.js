@@ -86,7 +86,7 @@ const Settings = {
   defaults: {
     key: '', model: 'gemini-flash-latest', lang: 'es', chunk: 1200, conc: 2, res: 'low', src: 'ai',
     theme: 'auto', font: 17, follow: true, speakers: true, vault: 'obsidian vault', folder: 'research/videos',
-    keepFiles: true, usage: {},
+    keepFiles: true, usage: {}, fallback: 'codex',
   },
   load() {
     try { return Object.assign({}, this.defaults, JSON.parse(localStorage.getItem('glosa_settings') || '{}')); }
