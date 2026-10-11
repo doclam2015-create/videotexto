@@ -380,7 +380,7 @@ async function ytMeta(v, src, signal, onWait) {
     Engine.oembed(v.url),
     probeYTDuration(src.id),
     Engine.pageInfo(v.url, { yt: true, signal, onWait }).catch(e => { if (e.name === 'AbortError') throw e; return null; }),
-    native ? bridge('ytinfo', { id: src.id, subs: txChoice() === 'subs' }).catch(() => null) : null,
+    native || ios ? bridge('ytinfo', { id: src.id, subs: txChoice() === 'subs' }).catch(() => null) : null,
   ]);
   if (oe) { v.title = oe.title; v.channel = oe.author_name; v.channelUrl = oe.author_url; }
   if (nat?.meta) {
@@ -491,16 +491,16 @@ const TX = {
   gemini: { name: 'Gemini', ic: 'sparkle', desc: 'IA completa: hablantes y texto en pantalla. Usa tu cuota de Gemini.' },
   groq: { name: 'Groq', ic: 'zap', desc: 'Whisper en la nube, ultrarrápido (1 h en ~30 s). Gratis con clave de Groq; solo audio.' },
   whisper: { name: 'Whisper Mac', ic: 'cpu', desc: 'Whisper en tu Mac: gratis, sin límites y sin internet. ~3 min por hora de video.', mac: true },
-  subs: { name: 'Subtítulos', ic: 'text', desc: 'Subtítulos de YouTube: instantáneo. Si el video no tiene, usa Whisper Mac.', mac: true },
-  apple: { name: 'Dictado Apple', ic: 'mic', desc: 'Dictado de Apple en tu Mac: gratis, precisión básica.', mac: true },
+  subs: { name: 'Subtítulos', ic: 'text', desc: 'Subtítulos de YouTube: instantáneo. Si el video no tiene, uso otro motor.', mac: true, ios: true },
+  apple: { name: 'Dictado Apple', ic: 'mic', desc: 'Dictado de Apple en el equipo: gratis, precisión básica.', mac: true, ios: true },
 };
-const txList = () => Object.keys(TX).filter(k => native || !TX[k].mac);
+const txList = () => Object.keys(TX).filter(k => native || !TX[k].mac || (ios && TX[k].ios));
 const txChoice = () => txList().includes(S.tx) ? S.tx : 'gemini';
 
 async function transcribeAny(v, media, signal, onWait) {
   const first = txChoice();
   const order = { gemini: ['gemini', 'subs', 'whisper', 'apple'], groq: ['groq', 'whisper', 'gemini', 'apple'], whisper: ['whisper', 'apple', 'gemini'], subs: ['whisper', 'gemini', 'apple'], apple: ['apple', 'whisper', 'gemini'] }[first];
-  const ok = e => txList().includes(e) && (e !== 'gemini' || (S.key && (media?.uri || media?.blob || media?.local))) && (e !== 'groq' || (S.groqKey && (native || media?.blob))) && (e !== 'subs' || v.kind === 'yt');
+  const ok = e => txList().includes(e) && (e !== 'gemini' || (S.key && (media?.uri || media?.blob || media?.local))) && (e !== 'groq' || (S.groqKey && (native || media?.blob))) && (e !== 'subs' || v.kind === 'yt') && (e !== 'apple' || native || media?.blob);
   const chain = order.filter(ok);
   if (!chain.length) throw new Error(first === 'groq' && !S.groqKey ? 'Falta la clave de Groq (Ajustes).' : first === 'groq' ? 'En iPhone/iPad, Groq transcribe archivos subidos; para enlaces usa Gemini.' : 'Agrega tu clave de Gemini en Ajustes.');
   if (chain[0] !== first && first !== 'subs') onWait(`${TX[first].name} no está disponible para este video; uso ${TX[chain[0]].name}`);
@@ -535,16 +535,17 @@ async function transcribeAny(v, media, signal, onWait) {
 // En el Mac: Whisper (whisper.cpp) o dictado de Apple, sin tokens
 async function localTranscribe(v, media, engine) {
   const name = engine === 'whisper' ? 'Whisper' : 'el dictado de Apple';
-  step(v, `Transcribiendo en el Mac con ${name}…`, 20);
+  step(v, `Transcribiendo ${ios ? 'en el equipo' : 'en el Mac'} con ${name}…`, 20);
   const off = e => {
     if (e.id !== v.id) return;
     if (e.type === 'dl') step(v, `Descargando audio… ${Math.round(e.pct)} %`, 15 + e.pct * 0.08);
     if (e.type === 'model') step(v, `Descargando el modelo de Whisper (solo la primera vez, 550 MB)… ${Math.round(e.pct)} %`, 16 + e.pct * 0.06);
-    if (e.type === 'tr') step(v, `Transcribiendo en el Mac con ${name}… ${Math.round(e.pct)} %`, 24 + e.pct * 0.66);
+    if (e.type === 'tr') step(v, `Transcribiendo ${ios ? 'en el equipo' : 'en el Mac'} con ${name}… ${Math.round(e.pct)} %`, 24 + e.pct * 0.66);
   };
   nativeListeners.add(off);
   try {
-    v.segments = await bridge('localtranscribe', { id: v.id, engine, url: v.kind === 'yt' ? v.url : (v.pageUrl || v.url || ''), media: media?.local || v.mediaUrl || '', lang: engine === 'whisper' ? '' : (v.lang || S.lang || 'es').slice(0, 2) });
+    v.segments = ios ? await bridge('localtranscribe', { id: v.id, engine, data: await blobB64(media.blob), ext: (media.blob.type.split('/')[1] || 'm4a').split(';')[0], lang: (v.lang || S.lang || 'es').slice(0, 2) })
+      : await bridge('localtranscribe', { id: v.id, engine, url: v.kind === 'yt' ? v.url : (v.pageUrl || v.url || ''), media: media?.local || v.mediaUrl || '', lang: engine === 'whisper' ? '' : (v.lang || S.lang || 'es').slice(0, 2) });
   } finally { nativeListeners.delete(off); }
 }
 
@@ -1381,7 +1382,7 @@ const Exporter = {
       h1{font-size:22pt;margin:0 0 4px}h2{font-size:14pt;margin:26px 0 8px;border-bottom:1px solid #ddd;padding-bottom:4px}
       a{color:#4b3fd6}blockquote{border-left:3px solid #7c6cff;margin:8px 0;padding:2px 12px;color:#333}
       .meta{color:#666;font-size:10pt}code{background:#f2f2f2;padding:0 3px}p{margin:6px 0}</style></head><body>${md(this.md(v)).replace(/<button class="ts" data-t="([^"]+)">[^<]*<\/button>/g, '<b>$1</b>')}</body></html>`;
-    if (native) { bridge('print', { html }).catch(e => toast(esc(e.message || e), 'err')); return; }
+    if (native || ios) { bridge('print', { html }).catch(e => toast(esc(e.message || e), 'err')); return; }
     const w = window.open('', '_blank');
     if (!w) { saveFile(slug(v.title) + '.html', html, 'text/html'); return; }
     w.document.write(html); w.document.close(); setTimeout(() => w.print(), 400);
@@ -1419,7 +1420,7 @@ const App = {
     const go = () => { if (inp.value.trim()) { startInput(inp.value); inp.value = ''; this.preview(''); } else paste(); };
     const paste = async () => {
       try {
-        const t = native ? await bridge('paste') : await navigator.clipboard.readText();
+        const t = native || ios ? await bridge('paste') : await navigator.clipboard.readText();
         if (t) { inp.value = t.trim(); this.preview(inp.value); if (Engine.parse(t)) go(); }
       } catch { inp.focus(); toast('Mantén presionado el campo y elige «Pegar»'); }
     };

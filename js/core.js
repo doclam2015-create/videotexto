@@ -116,10 +116,12 @@ function applyTheme() {
 matchMedia('(prefers-color-scheme: light)').addEventListener('change', applyTheme);
 
 // ---------- puente con Mac ----------
-const native = !!window.webkit?.messageHandlers?.glosa;
+const ios = !!window.GLOSA_IOS; // app de iPhone/iPad: subtítulos, dictado, guardar e imprimir nativos; sin yt-dlp ni Whisper
+const native = !!window.webkit?.messageHandlers?.glosa && !ios;
 function bridge(op, args = {}) {
   return window.webkit.messageHandlers.glosa.postMessage({ op, ...args });
 }
+const blobB64 = b => new Promise(r => { const f = new FileReader(); f.onload = () => r(String(f.result).split(',')[1]); f.readAsDataURL(b); });
 const nativeListeners = new Set();
 window.__glosaEvt = e => nativeListeners.forEach(f => f(e));
 
@@ -184,7 +186,7 @@ async function copyText(t, msg = 'Copiado') {
 }
 
 async function saveFile(name, text, mime = 'text/plain') {
-  if (native) { try { await bridge('save', { name, text }); } catch (e) { toast(esc(e.message || e), 'err'); } return; }
+  if (native || ios) { try { await bridge('save', { name, text }); } catch (e) { toast(esc(e.message || e), 'err'); } return; }
   const blob = new Blob([text], { type: mime + ';charset=utf-8' });
   const file = new File([blob], name, { type: mime });
   if (navigator.maxTouchPoints > 1 && navigator.canShare?.({ files: [file] })) {
