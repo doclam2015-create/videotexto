@@ -286,9 +286,10 @@ function mediaDuration(blobOrUrl) {
 }
 function videoThumb(file) {
   return new Promise((res, rej) => {
-    if (!/video/.test(file.type)) return res('');
+    const url = typeof file === 'string';
+    if (!url && !/video/.test(file.type)) return res('');
     const m = document.createElement('video');
-    m.muted = true; m.playsInline = true; m.preload = 'auto'; m.src = URL.createObjectURL(file);
+    m.muted = true; m.playsInline = true; m.preload = 'auto'; m.src = url ? file : URL.createObjectURL(file);
     m.onloadeddata = () => { m.currentTime = Math.min(5, (m.duration || 10) / 4); };
     m.onseeked = () => {
       const c = h('canvas', { width: 480, height: Math.round(480 * (m.videoHeight / m.videoWidth || 0.5625)) });
@@ -309,6 +310,17 @@ async function runPipeline(v, src, signal) {
     if (src.kind === 'yt') {
       await ytMeta(v, src, signal, onWait);
       media = { uri: v.url };
+    } else if (src.kind === 'nfile') {
+      step(v, 'Leyendo el archivo…', 2);
+      v.duration = await mediaDuration(src.media);
+      media = { local: src.media };
+      if (S.key) {
+        try {
+          step(v, 'Subiendo a Gemini…', 4);
+          const blob = await (await fetch(src.media)).blob();
+          media = v.file = await Engine.upload(new File([blob], src.name, { type: src.mime || blob.type }), src.name, p => step(v, `Subiendo a Gemini… ${Math.round(p * 100)} %`, 4 + p * 10), signal);
+        } catch (e) { if (e.name === 'AbortError') throw e; onWait('No se pudo subir a Gemini; transcribo en el Mac'); }
+      }
     } else if (src.kind === 'file') {
       step(v, 'Leyendo el archivo…', 2);
       v.duration = await mediaDuration(src.file);
@@ -330,7 +342,7 @@ async function runPipeline(v, src, signal) {
       else {
         try { await transcribe(v, media, signal, onWait); }
         catch (e) {
-          if (e.name === 'AbortError' || !native || v.kind === 'file') throw e;
+          if (e.name === 'AbortError' || !native || (v.kind === 'file' && !v.mediaUrl)) throw e;
           onWait('La API de Gemini no funcionó (' + String(e.message).slice(0, 70) + '); transcribo en el Mac');
           v.segments = []; v.screen = [];
           await localTranscribe(v, media);
@@ -1159,6 +1171,11 @@ const View = {
       });
       return;
     }
+    if (v.kind === 'file' && v.mediaUrl && native) {
+      Object.assign(v, { segments: [], screen: [], an: null, status: 'working', error: '' }); await saveV(v); this.refresh(v);
+      Jobs.add(signal => runPipeline(v, { kind: 'nfile', media: v.mediaUrl, mime: v.file?.mime, name: v.title }, signal));
+      return;
+    }
     if (v.kind === 'file') {
       if (v.file?.uri && v.file.expires > Date.now()) {
         Object.assign(v, { segments: [], screen: [], an: null, status: 'working', error: '' }); await saveV(v); this.refresh(v);
@@ -1356,9 +1373,22 @@ const App = {
     } else p.innerHTML = `<div class="pv glass"><div class="pv-ic">${icon('globe')}</div><div><small>Página web</small><b>${esc(domainOf(src.url))}</b></div></div>`;
   },
 
-  pickFile() {
-    const i = h('input', { type: 'file', accept: 'video/*,audio/*', onchange: () => i.files[0] && startFile(i.files[0]) });
+  async pickFile() {
+    if (native) { // en el Mac: selector nativo; el archivo se copia a la carpeta de Glosa y se sirve localmente
+      try { const r = await bridge('pickfile'); if (r) this.nativeFile(r); } catch (e) { toast(esc(e.message || e), 'err'); }
+      return;
+    }
+    const i = h('input', { type: 'file', accept: 'video/*,audio/*', style: 'position:fixed;left:-9999px', onchange: () => { if (i.files[0]) startFile(i.files[0]); i.remove(); } });
+    document.body.append(i);
     i.click();
+  },
+  async nativeFile(r) {
+    const id = 'f-' + uid();
+    const v = { id, kind: 'file', title: r.name.replace(/\.[^.]+$/, ''), channel: 'Archivo local', added: Date.now(), segments: [], screen: [], chat: [], marks: {}, notes: '', tr: {}, done: {}, status: 'working', mediaUrl: r.media, file: { mime: r.mime } };
+    v.thumb = await videoThumb(r.media).catch(() => '');
+    await saveV(v);
+    location.hash = 'v=' + id;
+    Jobs.add(signal => runPipeline(v, { kind: 'nfile', media: r.media, mime: r.mime, name: r.name }, signal));
   },
 
   async renderLib() {

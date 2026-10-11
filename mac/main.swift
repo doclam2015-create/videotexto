@@ -230,6 +230,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    // videos arrastrados al ícono del Dock o abiertos con «Abrir con › Glosa»
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for u in urls where u.isFileURL {
+            DispatchQueue.global().async {
+                guard let r = try? AppDelegate.importMedia(u), let j = try? JSONSerialization.data(withJSONObject: r), let s = String(data: j, encoding: .utf8) else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + (self.pageReady ? 0 : 2.5)) { self.window?.makeKeyAndOrderFront(nil); self.web.evaluateJavaScript("App.nativeFile(\(s))", completionHandler: nil) }
+            }
+        }
+    }
+
     // glosa://open?u=… (marcador del navegador o Atajos)
     @objc func handleURL(_ event: NSAppleEventDescriptor, _ reply: NSAppleEventDescriptor) {
         guard let s = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue, let c = URLComponents(string: s) else { return }
@@ -267,6 +277,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let reply: (Any?) -> Void = { v in DispatchQueue.main.async { replyHandler(v, nil) } }
         let fail: (String) -> Void = { m in DispatchQueue.main.async { replyHandler(nil, m) } }
         switch op {
+        case "pickfile":
+            let p = NSOpenPanel()
+            p.allowedContentTypes = [.movie, .video, .audio, .mpeg4Movie, .quickTimeMovie, .mp3, .mpeg4Audio, .wav]
+            p.allowsMultipleSelection = false; p.canChooseDirectories = false
+            p.message = "Elige un video o audio para transcribir"
+            p.beginSheetModal(for: window) { r in
+                guard r == .OK, let u = p.url else { replyHandler(nil, nil); return }
+                DispatchQueue.global().async {
+                    do { reply(try AppDelegate.importMedia(u)) } catch { fail(error.localizedDescription) }
+                }
+            }
+
         case "paste":
             replyHandler(NSPasteboard.general.string(forType: .string) ?? "", nil)
 
@@ -464,6 +486,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             progress(100 * Double(i + 1) / Double(parts.count))
         }
         return out
+    }
+
+    // Copia (o enlaza) un archivo del usuario a la carpeta de Glosa para servirlo y procesarlo
+    static func importMedia(_ u: URL) throws -> [String: Any] {
+        let ext = u.pathExtension.isEmpty ? "mp4" : u.pathExtension.lowercased()
+        let dest = mediaDir.appendingPathComponent("local-\(UUID().uuidString.prefix(8)).\(ext)")
+        do { try fm.linkItem(at: u, to: dest) } catch { try fm.copyItem(at: u, to: dest) }
+        let size = (try? fm.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.intValue ?? 0
+        return ["media": "/media/" + dest.lastPathComponent, "name": u.lastPathComponent, "size": size,
+                "mime": UTType(filenameExtension: ext)?.preferredMIMEType ?? "video/mp4"]
     }
 
     // Subtítulos de YouTube (manuales primero; automáticos en el idioma original si no hay)

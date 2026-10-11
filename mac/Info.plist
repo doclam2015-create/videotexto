@@ -17,6 +17,9 @@
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Glosa transcribe el audio de los videos en este Mac cuando la API de Gemini no está disponible.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>CFBundleDocumentTypes</key>
+  <array><dict><key>CFBundleTypeName</key><string>Video o audio</string><key>CFBundleTypeRole</key><string>Viewer</string><key>LSHandlerRank</key><string>Alternate</string>
+    <key>LSItemContentTypes</key><array><string>public.movie</string><string>public.audio</string></array></dict></array>
   <key>CFBundleURLTypes</key>
   <array><dict><key>CFBundleURLName</key><string>Glosa</string><key>CFBundleURLSchemes</key><array><string>glosa</string></array></dict></array>
   <key>NSHumanReadableCopyright</key><string>Dr. Marcelo Lam · 2026 · Uso personal, no comercial</string>
