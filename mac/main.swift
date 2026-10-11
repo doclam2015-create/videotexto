@@ -138,7 +138,13 @@ func run(_ exe: String, _ args: [String], timeout: TimeInterval = 900, stdin: St
     while p.isRunning { if Date() > deadline { p.terminate(); break }; Thread.sleep(forTimeInterval: 0.1) }
     p.waitUntilExit()
     outP.fileHandleForReading.readabilityHandler = nil; errP.fileHandleForReading.readabilityHandler = nil
-    out.append(outP.fileHandleForReading.readDataToEndOfFile()); err.append(errP.fileHandleForReading.readDataToEndOfFile())
+    let rest = outP.fileHandleForReading.readDataToEndOfFile()
+    out.append(rest); err.append(errP.fileHandleForReading.readDataToEndOfFile())
+    // las últimas líneas (p. ej. la ruta que imprime yt-dlp al terminar) pueden llegar después del último aviso
+    if let cb = onLine {
+        lock.lock(); let tail = pending + (String(data: rest, encoding: .utf8) ?? ""); lock.unlock()
+        tail.split(separator: "\n").forEach { cb(String($0)) }
+    }
     return ProcResult(out: String(data: out, encoding: .utf8) ?? "", err: String(data: err, encoding: .utf8) ?? "", code: p.terminationStatus)
 }
 
@@ -385,6 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                             if line.hasPrefix("GLOSA") { self.evt(["type": "dl", "id": id, "pct": Double(line.dropFirst(6).trimmingCharacters(in: CharacterSet(charactersIn: " %"))) ?? 0]) }
                             else if line.hasPrefix("/") { path = line }
                         }
+                        if path.isEmpty { path = r.out.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.last { $0.hasPrefix("/") } ?? "" }
                         if path.isEmpty { fail("No se pudo descargar el audio: " + cleanErr(r.err)); return }
                         input = URL(fileURLWithPath: path)
                     }
