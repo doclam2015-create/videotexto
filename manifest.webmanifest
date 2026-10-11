@@ -1,0 +1,18 @@
+{
+  "name": "Glosa — transcribe y analiza videos",
+  "short_name": "Glosa",
+  "description": "Transcripción completa, enlaces, resumen, capítulos y chat de videos de YouTube, páginas web y archivos.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e0d14",
+  "theme_color": "#0e0d14",
+  "lang": "es",
+  "categories": ["productivity", "education", "utilities"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "share_target": { "action": "./", "method": "GET", "params": { "title": "title", "text": "text", "url": "u" } }
+}

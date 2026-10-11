@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Glosa</string>
+  <key>CFBundleDisplayName</key><string>Glosa</string>
+  <key>CFBundleIdentifier</key><string>cl.doclam.glosa</string>
+  <key>CFBundleExecutable</key><string>Glosa</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleDevelopmentRegion</key><string>es</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>CFBundleURLTypes</key>
+  <array><dict><key>CFBundleURLName</key><string>Glosa</string><key>CFBundleURLSchemes</key><array><string>glosa</string></array></dict></array>
+  <key>NSHumanReadableCopyright</key><string>Dr. Marcelo Lam · 2026 · Uso personal, no comercial</string>
+</dict>
+</plist>
