@@ -84,7 +84,7 @@ if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
 // ---------- ajustes ----------
 const Settings = {
   defaults: {
-    key: '', model: 'gemini-flash-latest', lang: 'es', chunk: 1200, conc: 2, res: 'low', src: 'ai',
+    key: '', model: 'gemini-flash-latest', lang: 'es', chunk: 1200, conc: 2, res: 'low', src: 'ai', tx: 'gemini', groqKey: '',
     theme: 'auto', font: 17, follow: true, speakers: true, vault: 'obsidian vault', folder: 'research/videos',
     keepFiles: true, usage: {}, fallback: 'codex',
   },

@@ -1,7 +1,7 @@
 'use strict';
 // Glosa — interfaz: inicio + biblioteca, vista de video con reproductor sincronizado y pestañas de análisis.
 
-const VERSION = '1.0';
+const VERSION = '1.1';
 const SRC_LABEL = { desc: 'Descripción', pantalla: 'En pantalla', voz: 'Dicho en voz', mencionado: 'Mencionado', 'página': 'Página' };
 const SPK_COLORS = ['#ff7a59', '#7c6cff', '#2ec5a6', '#f5b83d', '#ff5c8a', '#3fa7ff', '#a3d65c', '#c77dff'];
 
@@ -314,7 +314,7 @@ async function runPipeline(v, src, signal) {
       step(v, 'Leyendo el archivo…', 2);
       v.duration = await mediaDuration(src.media);
       media = { local: src.media };
-      if (S.key) {
+      if (S.key && txChoice() === 'gemini') {
         try {
           step(v, 'Subiendo a Gemini…', 4);
           const blob = await (await fetch(src.media)).blob();
@@ -324,9 +324,12 @@ async function runPipeline(v, src, signal) {
     } else if (src.kind === 'file') {
       step(v, 'Leyendo el archivo…', 2);
       v.duration = await mediaDuration(src.file);
+      if (txChoice() === 'groq' && S.groqKey) media = { blob: src.file };
+      else {
       step(v, 'Subiendo a Gemini… 0 %', 4);
       media = await Engine.upload(src.file, src.file.name, p => step(v, `Subiendo a Gemini… ${Math.round(p * 100)} %`, 4 + p * 10), signal);
       v.file = media;
+      }
     } else {
       const r = await webSource(v, src, signal, onWait);
       if (r === 'yt') return; // se redirigió a YouTube
@@ -337,18 +340,7 @@ async function runPipeline(v, src, signal) {
     View.refresh(v);
 
     // ---------- 2. transcripción ----------
-    if (!v.segments.length) {
-      if (native && (!S.key || media?.local)) await localTranscribe(v, media);
-      else {
-        try { await transcribe(v, media, signal, onWait); }
-        catch (e) {
-          if (e.name === 'AbortError' || !native || (v.kind === 'file' && !v.mediaUrl)) throw e;
-          onWait('La API de Gemini no funcionó (' + String(e.message).slice(0, 70) + '); transcribo en el Mac');
-          v.segments = []; v.screen = [];
-          await localTranscribe(v, media);
-        }
-      }
-    }
+    if (!v.segments.length) await transcribeAny(v, media, signal, onWait);
     if (!v.segments.length) throw new Error('No se encontró voz que transcribir en el video.');
     v.lang = v.lang || '';
     await saveV(v);
@@ -388,7 +380,7 @@ async function ytMeta(v, src, signal, onWait) {
     Engine.oembed(v.url),
     probeYTDuration(src.id),
     Engine.pageInfo(v.url, { yt: true, signal, onWait }).catch(e => { if (e.name === 'AbortError') throw e; return null; }),
-    native ? bridge('ytinfo', { id: src.id, subs: S.src === 'subs' }).catch(() => null) : null,
+    native ? bridge('ytinfo', { id: src.id, subs: txChoice() === 'subs' }).catch(() => null) : null,
   ]);
   if (oe) { v.title = oe.title; v.channel = oe.author_name; v.channelUrl = oe.author_url; }
   if (nat?.meta) {
@@ -409,7 +401,7 @@ async function ytMeta(v, src, signal, onWait) {
     if (v.title === 'Video de YouTube' && info.title) v.title = info.title;
   }
   v.duration = v.duration || dur || +info?.duration_seconds || 0;
-  if (nat?.subs?.length) { v.segments = nat.subs; v.subsSource = nat.subsLang; }
+  if (nat?.subs?.length) { v.segments = nat.subs; v.subsSource = nat.subsLang; v.txEngine = 'subs'; }
 }
 
 // Páginas web: en el Mac, yt-dlp descarga el video de casi cualquier sitio; en iPad/iPhone se busca el video dentro de la página.
@@ -426,9 +418,10 @@ async function webSource(v, src, signal, onWait) {
       Object.assign(v, { title: m.title || v.title, channel: m.uploader || m.channel || domainOf(src.url), description: m.description || '', duration: m.duration || 0, thumb: m.thumbnail || '', published: m.upload_date ? m.upload_date.replace(/(\d{4})(\d\d)(\d\d)/, '$1-$2-$3') : '', mediaUrl: r.media, pageUrl: m.webpage_url || src.url });
       if (m.chapters?.length) v.chaptersDesc = m.chapters.map(c => ({ t: c.start_time, title: c.title }));
       step(v, 'Preparando el video…', 9);
-      const blob = S.key ? await (await fetch(r.media)).blob() : null;
+      const gem = S.key && txChoice() === 'gemini';
+      const blob = gem ? await (await fetch(r.media)).blob() : null;
       if (!v.duration) v.duration = await mediaDuration(r.media);
-      if (!S.key) return { local: r.media };
+      if (!gem) return { local: r.media };
       step(v, 'Subiendo a Gemini…', 10);
       try {
         const f = await Engine.upload(blob, v.title, p => step(v, `Subiendo a Gemini… ${Math.round(p * 100)} %`, 10 + p * 6), signal);
@@ -493,24 +486,121 @@ async function redirectYT(v, id, extra) {
   if (View.v?.id === nv.id) View.open(nv.id);
 }
 
-// Respaldo en el Mac: subtítulos de YouTube si existen; si no, dictado de Apple en el propio equipo (gratis, sin tokens)
-async function localTranscribe(v, media) {
-  if (v.kind === 'yt') {
-    step(v, 'Buscando subtítulos de YouTube…', 18);
-    const r = await bridge('ytinfo', { id: v.ytId, subs: true }).catch(() => null);
-    if (r?.subs?.length) { v.segments = r.subs; v.subsSource = r.subsLang; v.localTr = 'subs'; return; }
+// Motores de transcripción. El usuario elige uno; si falla, se prueba el siguiente disponible.
+const TX = {
+  gemini: { name: 'Gemini', ic: 'sparkle', desc: 'IA completa: hablantes y texto en pantalla. Usa tu cuota de Gemini.' },
+  groq: { name: 'Groq', ic: 'zap', desc: 'Whisper en la nube, ultrarrápido (1 h en ~30 s). Gratis con clave de Groq; solo audio.' },
+  whisper: { name: 'Whisper Mac', ic: 'cpu', desc: 'Whisper en tu Mac: gratis, sin límites y sin internet. ~3 min por hora de video.', mac: true },
+  subs: { name: 'Subtítulos', ic: 'text', desc: 'Subtítulos de YouTube: instantáneo. Si el video no tiene, usa Whisper Mac.', mac: true },
+  apple: { name: 'Dictado Apple', ic: 'mic', desc: 'Dictado de Apple en tu Mac: gratis, precisión básica.', mac: true },
+};
+const txList = () => Object.keys(TX).filter(k => native || !TX[k].mac);
+const txChoice = () => txList().includes(S.tx) ? S.tx : 'gemini';
+
+async function transcribeAny(v, media, signal, onWait) {
+  const first = txChoice();
+  const order = { gemini: ['gemini', 'subs', 'whisper', 'apple'], groq: ['groq', 'whisper', 'gemini', 'apple'], whisper: ['whisper', 'apple', 'gemini'], subs: ['whisper', 'gemini', 'apple'], apple: ['apple', 'whisper', 'gemini'] }[first];
+  const ok = e => txList().includes(e) && (e !== 'gemini' || (S.key && (media?.uri || media?.blob || media?.local))) && (e !== 'groq' || (S.groqKey && (native || media?.blob))) && (e !== 'subs' || v.kind === 'yt');
+  const chain = order.filter(ok);
+  if (!chain.length) throw new Error(first === 'groq' && !S.groqKey ? 'Falta la clave de Groq (Ajustes).' : first === 'groq' ? 'En iPhone/iPad, Groq transcribe archivos subidos; para enlaces usa Gemini.' : 'Agrega tu clave de Gemini en Ajustes.');
+  if (chain[0] !== first && first !== 'subs') onWait(`${TX[first].name} no está disponible para este video; uso ${TX[chain[0]].name}`);
+  for (let i = 0; i < chain.length; i++) {
+    const e = chain[i], t0 = Date.now();
+    try {
+      v.segments = []; v.screen = [];
+      if (e === 'gemini') {
+        if (!media.uri) {
+          const blob = media.blob || await (await fetch(media.local)).blob();
+          step(v, 'Subiendo a Gemini…', 8);
+          Object.assign(media, v.file = await Engine.upload(blob, v.title || 'video', p => step(v, `Subiendo a Gemini… ${Math.round(p * 100)} %`, 8 + p * 7), signal));
+        }
+        await transcribe(v, media, signal, onWait);
+      } else if (e === 'groq') await groqTranscribe(v, media, signal);
+      else if (e === 'subs') {
+        step(v, 'Buscando subtítulos de YouTube…', 18);
+        const r = await bridge('ytinfo', { id: v.ytId, subs: true }).catch(() => null);
+        if (!r?.subs?.length) throw new Error('el video no tiene subtítulos');
+        v.segments = r.subs; v.subsSource = r.subsLang;
+      } else await localTranscribe(v, media, e);
+      if (!v.segments.length) throw new Error('no reconoció voz');
+      v.txEngine = e; v.txSecs = Math.round((Date.now() - t0) / 1000);
+      return;
+    } catch (err) {
+      if (err.name === 'AbortError' || i === chain.length - 1) throw err;
+      onWait(`${TX[e].name} no funcionó (${String(err.message).slice(0, 70)}); pruebo con ${TX[chain[i + 1]].name}`);
+    }
   }
-  step(v, 'Transcribiendo en el Mac con el dictado de Apple…', 20);
+}
+
+// En el Mac: Whisper (whisper.cpp) o dictado de Apple, sin tokens
+async function localTranscribe(v, media, engine) {
+  const name = engine === 'whisper' ? 'Whisper' : 'el dictado de Apple';
+  step(v, `Transcribiendo en el Mac con ${name}…`, 20);
   const off = e => {
     if (e.id !== v.id) return;
     if (e.type === 'dl') step(v, `Descargando audio… ${Math.round(e.pct)} %`, 15 + e.pct * 0.08);
-    if (e.type === 'tr') step(v, `Transcribiendo en el Mac (dictado de Apple)… ${Math.round(e.pct)} %`, 24 + e.pct * 0.66);
+    if (e.type === 'model') step(v, `Descargando el modelo de Whisper (solo la primera vez, 550 MB)… ${Math.round(e.pct)} %`, 16 + e.pct * 0.06);
+    if (e.type === 'tr') step(v, `Transcribiendo en el Mac con ${name}… ${Math.round(e.pct)} %`, 24 + e.pct * 0.66);
   };
   nativeListeners.add(off);
   try {
-    v.segments = await bridge('localtranscribe', { id: v.id, url: v.kind === 'yt' ? v.url : (v.pageUrl || v.url || ''), media: media?.local || v.mediaUrl || '', lang: (v.lang || S.lang || 'es').slice(0, 2) });
-    v.localTr = 'apple';
+    v.segments = await bridge('localtranscribe', { id: v.id, engine, url: v.kind === 'yt' ? v.url : (v.pageUrl || v.url || ''), media: media?.local || v.mediaUrl || '', lang: engine === 'whisper' ? '' : (v.lang || S.lang || 'es').slice(0, 2) });
   } finally { nativeListeners.delete(off); }
+}
+
+// Groq: Whisper large-v3-turbo en la nube. En el Mac el audio se prepara con ffmpeg; en iPhone/iPad se envía el archivo subido.
+async function groqTranscribe(v, media, signal) {
+  let parts;
+  if (native) {
+    step(v, 'Preparando el audio para Groq…', 15);
+    const off = e => { if (e.id === v.id && e.type === 'dl') step(v, `Descargando audio… ${Math.round(e.pct)} %`, 15 + e.pct * 0.1); };
+    nativeListeners.add(off);
+    try { parts = await bridge('localtranscribe', { id: v.id, engine: 'groq', url: v.kind === 'yt' ? v.url : (v.pageUrl || v.url || ''), media: media?.local || v.mediaUrl || '' }); }
+    finally { nativeListeners.delete(off); }
+    parts = parts.map(p => ({ t: p.t, get: async () => (await fetch(p.url)).blob() }));
+  } else parts = await audioParts(media.blob);
+  let done = 0;
+  const report = () => step(v, `Transcribiendo con Groq${parts.length > 1 ? `: ${done} de ${parts.length} partes` : '…'}`, 26 + 64 * done / parts.length);
+  report();
+  await pool(parts, 3, async p => {
+    const j = await groqFile(await p.get(), signal);
+    v.segments.push(...(j.segments || []).map(s => ({ t: p.t + s.start, s: '', x: s.text.trim() })).filter(s => s.x));
+    v.segments.sort((x, y) => x.t - y.t);
+    if (j.language && !v.lang) v.lang = { spanish: 'es', english: 'en', portuguese: 'pt', french: 'fr', german: 'de', italian: 'it' }[j.language.toLowerCase()] || '';
+    done++; report(); View.liveTranscript(v);
+  });
+}
+
+async function groqFile(blob, signal, tries = 0) {
+  const fd = new FormData();
+  fd.append('file', blob, blob.name || (/mpeg|mp3/.test(blob.type) ? 'audio.mp3' : /wav/.test(blob.type) ? 'audio.wav' : 'audio.mp4'));
+  fd.append('model', 'whisper-large-v3-turbo');
+  fd.append('response_format', 'verbose_json');
+  const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + S.groqKey }, body: fd, signal });
+  if (r.status === 429 && tries < 3) { await sleep(Math.min(60, +r.headers.get('retry-after') || 20) * 1000); return groqFile(blob, signal, tries + 1); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(r.status === 401 ? 'clave de Groq no válida' : r.status === 413 ? 'archivo demasiado grande para Groq' : j.error?.message || 'Groq respondió ' + r.status);
+  return j;
+}
+
+// iPhone/iPad: archivos grandes se convierten a WAV mono 16 kHz en partes de 10 min (≈19 MB cada una)
+async function audioParts(file) {
+  if (file.size <= 24e6) return [{ t: 0, get: async () => file }];
+  const Ctx = window.AudioContext || window.webkitAudioContext, ac = new Ctx();
+  const audio = await ac.decodeAudioData(await file.arrayBuffer()); ac.close?.();
+  const sr = 16000, off = new OfflineAudioContext(1, Math.ceil(audio.duration * sr), sr);
+  const src = off.createBufferSource(); src.buffer = audio; src.connect(off.destination); src.start();
+  const pcm = (await off.startRendering()).getChannelData(0), per = 600 * sr, out = [];
+  for (let a = 0; a < pcm.length; a += per) {
+    const d = pcm.subarray(a, Math.min(pcm.length, a + per)), buf = new DataView(new ArrayBuffer(44 + d.length * 2));
+    const w = (o, str) => [...str].forEach((c, i) => buf.setUint8(o + i, c.charCodeAt(0)));
+    w(0, 'RIFF'); buf.setUint32(4, 36 + d.length * 2, true); w(8, 'WAVEfmt '); buf.setUint32(16, 16, true); buf.setUint16(20, 1, true); buf.setUint16(22, 1, true);
+    buf.setUint32(24, sr, true); buf.setUint32(28, sr * 2, true); buf.setUint16(32, 2, true); buf.setUint16(34, 16, true); w(36, 'data'); buf.setUint32(40, d.length * 2, true);
+    for (let i = 0; i < d.length; i++) buf.setInt16(44 + i * 2, Math.max(-1, Math.min(1, d[i])) * 32767, true);
+    const blob = new Blob([buf], { type: 'audio/wav' });
+    out.push({ t: a / sr, get: async () => blob });
+  }
+  return out;
 }
 
 async function transcribe(v, media, signal, onWait) {
@@ -619,6 +709,7 @@ const View = {
         v.duration ? h('span', { html: icon('clock') + fmtT(v.duration) }) : null,
         v.published ? h('span', {}, v.published) : null,
         words ? h('span', {}, words.toLocaleString('es-CL') + ' palabras') : null,
+        TX[v.txEngine] ? h('span', { class: 'txbadge', html: icon(TX[v.txEngine].ic) + 'Transcrito con ' + TX[v.txEngine].name + (v.txSecs ? ` en ${fmtDur(v.txSecs)}` : '') }) : null,
         v.url || v.pageUrl ? h('a', { href: v.pageUrl || v.url, target: '_blank', rel: 'noopener', html: icon('external') + 'Original' }) : null),
       v.an?.tags?.length ? h('div', { class: 'tags' }, v.an.tags.map(t => h('span', { class: 'tag' }, '#' + t))) : null));
   },
@@ -1346,6 +1437,7 @@ const App = {
         h('div', { class: 'omni glass' }, h('span', { class: 'omni-ic', html: icon('link') }), inp,
           h('button', { class: 'btn ghost', html: icon('paste') + '<span class="hide-sm">Pegar</span>', onclick: paste }),
           h('button', { class: 'btn primary', html: icon('sparkle') + 'Analizar', onclick: go })),
+        h('div', { id: 'txsel' }),
         h('div', { id: 'preview' }),
         h('div', { class: 'row center wrap hero-actions' },
           h('button', { class: 'chip big', html: icon('upload') + 'Subir video o audio', onclick: () => this.pickFile() }),
@@ -1359,7 +1451,23 @@ const App = {
           h('div', { class: 'search sm' }, h('span', { html: icon('search') }), h('input', { type: 'search', placeholder: 'Buscar en títulos y transcripciones', oninput: e => { this.q = e.target.value; this.renderLib(); } }))),
         h('div', { class: 'row wrap filters', id: 'libf' }),
         h('div', { class: 'grid', id: 'grid' })));
+    this.renderTx();
     this.renderLib();
+  },
+
+  renderTx() {
+    const el = $('#txsel'); if (!el) return;
+    const cur = txChoice();
+    el.className = 'txsel';
+    el.innerHTML = '';
+    el.append(
+      h('div', { class: 'row center wrap' }, h('span', { class: 'txlab' }, 'Transcribir con'),
+        txList().map(k => h('button', { class: 'chip big' + (k === cur ? ' on' : ''), 'aria-pressed': String(k === cur), html: icon(TX[k].ic) + TX[k].name, onclick: () => {
+          saveSettings({ tx: k }); this.renderTx();
+          if (k === 'groq' && !S.groqKey) this.settings();
+          if (k === 'gemini' && !S.key) this.settings();
+        } }))),
+      h('p', { class: 'txdesc' }, TX[cur].desc + (cur === 'groq' && !S.groqKey ? ' — falta tu clave de Groq.' : '') + (cur === 'groq' && !native ? ' En iPhone/iPad: solo archivos subidos.' : '')));
   },
 
   async preview(val) {
@@ -1457,7 +1565,7 @@ const App = {
 
   settings() {
     const field = (label, input, hint) => h('label', { class: 'field' }, h('span', {}, label), input, hint ? h('small', { class: 'muted', html: hint }) : null);
-    const sel = (key, opts, num) => { const s = h('select', { onchange: () => saveSettings({ [key]: num ? +s.value : s.value }) }, opts.map(([v, l]) => h('option', { value: v, selected: String(S[key]) === String(v) }, l))); return s; };
+    const sel = (key, opts, num) => { const s = h('select', { onchange: () => { saveSettings({ [key]: num ? +s.value : s.value }); if (key === 'tx') this.renderTx(); } }, opts.map(([v, l]) => h('option', { value: v, selected: String(S[key]) === String(v) }, l))); return s; };
     const key = h('input', { type: 'password', value: S.key, placeholder: 'AIza…', autocomplete: 'off', spellcheck: 'false' });
     const keyMsg = h('small', { class: 'muted' });
     const test = async () => {
@@ -1467,6 +1575,18 @@ const App = {
       catch (e) { keyMsg.innerHTML = `<span class="badc">✗ ${esc(e.message)}</span>`; }
     };
     key.onchange = test;
+    const gkey = h('input', { type: 'password', value: S.groqKey || '', placeholder: 'gsk_…', autocomplete: 'off', spellcheck: 'false' });
+    const gMsg = h('small', { class: 'muted' });
+    const gtest = async () => {
+      const k = gkey.value.trim(); if (!k) return;
+      gMsg.textContent = 'Probando…';
+      try {
+        const r = await fetch('https://api.groq.com/openai/v1/models', { headers: { Authorization: 'Bearer ' + k } });
+        if (!r.ok) throw new Error(r.status === 401 ? 'Clave no válida' : 'Groq respondió ' + r.status);
+        saveSettings({ groqKey: k }); gMsg.innerHTML = '<span class="okc">✓ Clave de Groq válida y guardada</span>'; this.renderTx();
+      } catch (e) { gMsg.innerHTML = `<span class="badc">✗ ${esc(e.message)}</span>`; }
+    };
+    gkey.onchange = gtest;
     const usage = Object.values(S.usage)[0];
     const body = h('div', { class: 'settings' },
       h('section', {}, h('h3', { html: icon('sparkle') + ' Inteligencia artificial' }),
@@ -1476,10 +1596,13 @@ const App = {
         field('Modelo', sel('model', [['gemini-flash-latest', 'Gemini Flash — recomendado (rápido y preciso)'], ['gemini-flash-lite-latest', 'Gemini Flash-Lite — más rápido y con más cuota'], ['gemini-pro-latest', 'Gemini Pro — máxima calidad (cuota menor)']])),
         field('Idioma de resúmenes y chat', sel('lang', Object.entries(LANGS).map(([c, n]) => [c, n[0].toUpperCase() + n.slice(1)])))),
       h('section', {}, h('h3', { html: icon('text') + ' Transcripción' }),
+        field('Motor de transcripción', sel('tx', txList().map(k => [k, TX[k].name + ' — ' + TX[k].desc])), 'También se elige en la pantalla de inicio. Si el motor falla, Glosa prueba el siguiente disponible.'),
+        field('Clave de Groq (gratis)', h('div', { class: 'row' }, gkey, h('button', { class: 'btn ghost sm', onclick: () => { gkey.type = gkey.type === 'password' ? 'text' : 'password'; } }, 'Ver'), h('button', { class: 'btn primary sm', onclick: gtest }, 'Guardar')),
+          '1) Entra a <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> · 2) «Create API Key» · 3) Pégala aquí. Se guarda solo en este dispositivo.'),
+        gMsg,
         field('Tamaño de cada parte', sel('chunk', [[600, '10 min — más preciso'], [1200, '20 min — recomendado'], [1800, '30 min — ahorra cuota gratuita']], true), 'Los videos largos se dividen y se transcriben en paralelo.'),
         field('Partes en paralelo', sel('conc', [[1, '1 (cuenta gratuita, más estable)'], [2, '2 (recomendado)'], [3, '3'], [4, '4 (cuenta con facturación)']], true)),
         field('Lectura de pantalla', sel('res', [['low', 'Normal — más rápido y económico'], ['std', 'Detallada — lee mejor texto pequeño y enlaces']])),
-        native ? field('Fuente en el Mac', sel('src', [['ai', 'IA: audio + texto en pantalla + hablantes'], ['subs', 'Subtítulos de YouTube si existen (instantáneo)']])) : null,
         native ? field('Si la API no funciona (Mac)', sel('fallback', [['codex', 'Usar mi cuenta de ChatGPT (Codex)'], ['gemini', 'Usar mi cuenta de Google (Gemini CLI)'], ['off', 'No usar respaldo']]),
           'La transcripción pasa a los subtítulos de YouTube o al dictado de Apple en este Mac (gratis, solo audio: sin hablantes ni texto en pantalla). El resumen, el chat y lo demás usan tu cuenta.') : null),
       h('section', {}, h('h3', { html: icon('eye') + ' Apariencia' }),

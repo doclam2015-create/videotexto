@@ -106,9 +106,9 @@ struct ProcResult { let out: String; let err: String; let code: Int32 }
 
 func which(_ exe: String) -> String? { binPaths.map { $0 + "/" + exe }.first { fm.isExecutableFile(atPath: $0) } }
 
-func run(_ exe: String, _ args: [String], timeout: TimeInterval = 900, stdin: String? = nil, onLine: ((String) -> Void)? = nil) throws -> ProcResult {
+func run(_ exe: String, _ args: [String], timeout: TimeInterval = 900, stdin: String? = nil, onLine: ((String) -> Void)? = nil, onErr: ((String) -> Void)? = nil) throws -> ProcResult {
     guard let bin = which(exe) else {
-        throw NSError(domain: "glosa", code: 1, userInfo: [NSLocalizedDescriptionKey: ["codex", "gemini"].contains(exe) ? "No encontré «\(exe)» en este Mac. Instálalo e inicia sesión con tu cuenta." : "Falta «\(exe)». Instálalo con: brew install yt-dlp ffmpeg"])
+        throw NSError(domain: "glosa", code: 1, userInfo: [NSLocalizedDescriptionKey: ["codex", "gemini"].contains(exe) ? "No encontré «\(exe)» en este Mac. Instálalo e inicia sesión con tu cuenta." : exe == "whisper-cli" ? "Falta Whisper. Instálalo con: brew install whisper-cpp" : "Falta «\(exe)». Instálalo con: brew install yt-dlp ffmpeg"])
     }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: bin)
@@ -131,7 +131,7 @@ func run(_ exe: String, _ args: [String], timeout: TimeInterval = 900, stdin: St
             while let r = pending.range(of: "\n") { cb(String(pending[..<r.lowerBound])); pending = String(pending[r.upperBound...]) }
         }
     }
-    errP.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; lock.lock(); err.append(d); lock.unlock() }
+    errP.fileHandleForReading.readabilityHandler = { h in let d = h.availableData; lock.lock(); err.append(d); lock.unlock(); if let cb = onErr, let s = String(data: d, encoding: .utf8) { s.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).forEach { cb(String($0)) } } }
     try p.run()
     if let s = stdin { inP.fileHandleForWriting.write(Data(s.utf8)); try? inP.fileHandleForWriting.close() }
     let deadline = Date().addingTimeInterval(timeout)
@@ -371,7 +371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         case "localtranscribe":
             // transcripción gratuita en el propio Mac con el dictado de Apple (solo audio)
             let id = (b["id"] as? String ?? UUID().uuidString).replacingOccurrences(of: "/", with: "-")
-            let url = b["url"] as? String ?? "", media = b["media"] as? String ?? "", lang = b["lang"] as? String ?? "es"
+            let url = b["url"] as? String ?? "", media = b["media"] as? String ?? "", lang = b["lang"] as? String ?? "es", engine = b["engine"] as? String ?? "apple"
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
                     var input: URL
@@ -388,8 +388,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
                         if path.isEmpty { fail("No se pudo descargar el audio: " + cleanErr(r.err)); return }
                         input = URL(fileURLWithPath: path)
                     }
-                    let segs = try AppDelegate.speechTranscribe(input, lang: lang) { p in self.evt(["type": "tr", "id": id, "pct": p]) }
-                    if segs.isEmpty { fail("El dictado de Apple no reconoció voz en el audio."); return }
+                    let prog: (Double) -> Void = { p in self.evt(["type": "tr", "id": id, "pct": p]) }
+                    if engine == "groq" { reply(try AppDelegate.audioParts(input, id: id)); return }
+                    let segs = engine == "whisper" ? try AppDelegate.whisperTranscribe(input, lang: lang, id: id, evt: self.evt, progress: prog)
+                                                   : try AppDelegate.speechTranscribe(input, lang: lang, progress: prog)
+                    if segs.isEmpty { fail(engine == "whisper" ? "Whisper no reconoció voz en el audio." : "El dictado de Apple no reconoció voz en el audio."); return }
                     reply(segs)
                 } catch { fail(error.localizedDescription) }
             }
@@ -486,6 +489,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             progress(100 * Double(i + 1) / Double(parts.count))
         }
         return out
+    }
+
+    // Audio comprimido (mp3 mono 16 kHz, 32 kbps) en partes de 20 min, bajo el límite de 25 MB de Groq
+    static func audioParts(_ file: URL, id: String) throws -> [[String: Any]] {
+        let dir = mediaDir.appendingPathComponent("groq", isDirectory: true)
+        try? fm.removeItem(at: dir)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let r = try run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", file.path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "libmp3lame", "-b:a", "32k", "-f", "segment", "-segment_time", "1200", dir.path + "/\(id)-%03d.mp3"], timeout: 1800)
+        let parts = ((try? fm.contentsOfDirectory(atPath: dir.path)) ?? []).filter { $0.hasSuffix(".mp3") }.sorted()
+        if parts.isEmpty { throw NSError(domain: "glosa", code: 6, userInfo: [NSLocalizedDescriptionKey: "No se pudo preparar el audio: " + r.err.suffix(200)]) }
+        return parts.enumerated().map { ["url": "/media/groq/" + $1, "t": Double($0) * 1200] }
+    }
+
+    // Whisper (whisper.cpp) en el propio Mac con aceleración del chip; descarga el modelo la primera vez
+    static func whisperTranscribe(_ file: URL, lang: String, id: String, evt: @escaping ([String: Any]) -> Void, progress: @escaping (Double) -> Void) throws -> [[String: Any]] {
+        let models = support.appendingPathComponent("models", isDirectory: true)
+        let model = models.appendingPathComponent("ggml-large-v3-turbo-q5_0.bin")
+        if !fm.fileExists(atPath: model.path) {
+            try fm.createDirectory(at: models, withIntermediateDirectories: true)
+            let sem = DispatchSemaphore(value: 0); var dlErr: Error?
+            let task = URLSession.shared.downloadTask(with: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin")!) { tmp, _, e in
+                if let tmp = tmp { do { try fm.moveItem(at: tmp, to: model) } catch { dlErr = error } } else { dlErr = e }
+                sem.signal()
+            }
+            let obs = task.progress.observe(\.fractionCompleted) { p, _ in evt(["type": "model", "id": id, "pct": p.fractionCompleted * 100]) }
+            task.resume(); sem.wait(); obs.invalidate()
+            if let e = dlErr { throw NSError(domain: "glosa", code: 7, userInfo: [NSLocalizedDescriptionKey: "No se pudo descargar el modelo de Whisper: " + e.localizedDescription]) }
+        }
+        let dir = fm.temporaryDirectory.appendingPathComponent("glosa-wh-\(UUID().uuidString)", isDirectory: true)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let wav = dir.appendingPathComponent("a.wav")
+        let cut = try run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-i", file.path, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", wav.path], timeout: 1800)
+        if !fm.fileExists(atPath: wav.path) { throw NSError(domain: "glosa", code: 6, userInfo: [NSLocalizedDescriptionKey: "No se pudo preparar el audio: " + cut.err.suffix(200)]) }
+        let threads = String(max(4, ProcessInfo.processInfo.activeProcessorCount - 2))
+        let r = try run("whisper-cli", ["-m", model.path, "-f", wav.path, "-l", lang.isEmpty ? "auto" : lang, "-t", threads, "-pp", "-oj", "-of", dir.appendingPathComponent("out").path], timeout: 10800, onErr: { line in
+            if let rg = line.range(of: "progress =") { progress(Double(line[rg.upperBound...].trimmingCharacters(in: CharacterSet(charactersIn: " %"))) ?? 0) }
+        })
+        guard let d = fm.contents(atPath: dir.appendingPathComponent("out.json").path),
+              let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any], let tr = j["transcription"] as? [[String: Any]] else {
+            throw NSError(domain: "glosa", code: 8, userInfo: [NSLocalizedDescriptionKey: "Whisper falló: " + r.err.suffix(300)])
+        }
+        return tr.compactMap { s in
+            let x = (s["text"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let t = Double(((s["offsets"] as? [String: Any])?["from"] as? Int) ?? 0) / 1000
+            return x.isEmpty || x.hasPrefix("[") ? nil : ["t": t, "s": "", "x": x]
+        }
     }
 
     // Copia (o enlaza) un archivo del usuario a la carpeta de Glosa para servirlo y procesarlo
