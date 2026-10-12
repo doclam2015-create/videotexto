@@ -24,7 +24,7 @@ const Engine = {
   async gem(o) {
     const textOnly = !o.tools && !JSON.stringify(o.parts).includes('file_data');
     const canCli = native && S.fallback !== 'off' && textOnly;
-    if (textOnly && !o.tools && S.tx === 'groq' && S.groqKey) {
+    if (textOnly && !o.tools && ['groq', 'whisper'].includes(S.tx) && S.groqKey) {
       try { return await this.groqApi(o); }
       catch (e) { if (e.name === 'AbortError' || !S.key) throw e; o.onWait?.('Groq no respondió (' + String(e.message).slice(0, 60) + '); uso Gemini'); }
     }

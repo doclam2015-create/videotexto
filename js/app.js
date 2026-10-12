@@ -346,7 +346,7 @@ async function runPipeline(v, src, signal) {
     await saveV(v);
 
     // ---------- 3. análisis ----------
-    step(v, `Analizando con ${S.tx === 'groq' && S.groqKey ? 'Groq' : 'Gemini'}: resumen, capítulos, enlaces, ideas…`, 92);
+    step(v, `Analizando con ${['groq', 'whisper'].includes(S.tx) && S.groqKey ? 'Groq' : 'Gemini'}: resumen, capítulos, enlaces, ideas…`, 92);
     try { v.an = await Engine.analyze(v, { signal, onWait }); }
     catch (e) { if (e.name === 'AbortError') throw e; v.anError = e.message; toast('Transcripción lista; el análisis falló: ' + esc(e.message), 'err'); }
     if (v.an?.title && /^(Video de YouTube|[\w.-]+\.\w+)$/.test(v.title)) v.title = v.an.title;
