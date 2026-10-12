@@ -24,6 +24,10 @@ const Engine = {
   async gem(o) {
     const textOnly = !o.tools && !JSON.stringify(o.parts).includes('file_data');
     const canCli = native && S.fallback !== 'off' && textOnly;
+    if (textOnly && !o.tools && S.tx === 'groq' && S.groqKey) {
+      try { return await this.groqApi(o); }
+      catch (e) { if (e.name === 'AbortError' || !S.key) throw e; o.onWait?.('Groq no respondió (' + String(e.message).slice(0, 60) + '); uso Gemini'); }
+    }
     if (!S.key && canCli) return this.cli(o);
     try { return await this.gemApi(o); }
     catch (e) {
@@ -42,6 +46,36 @@ const Engine = {
     onWait?.('Usando tu cuenta de ' + (S.fallback === 'gemini' ? 'Google (Gemini CLI)' : 'ChatGPT (Codex)') + '…');
     const text = await bridge('cli', { provider: S.fallback === 'gemini' ? 'gemini' : 'codex', prompt });
     return { text: String(text || ''), finish: 'STOP' };
+  },
+
+  // Groq (modelos abiertos, muy rápidos) para las tareas de texto cuando es el motor elegido
+  async groqApi({ parts, schema, system, maxTokens = 8000, signal, onWait }) {
+    const msgs = [];
+    let sys = system || '';
+    if (schema) sys += '\n\nResponde ÚNICAMENTE con JSON válido que siga este esquema: ' + JSON.stringify(schema);
+    if (sys) msgs.push({ role: 'system', content: sys });
+    if (parts[0]?.role) parts.forEach(t => msgs.push({ role: t.role === 'user' ? 'user' : 'assistant', content: t.parts.map(p => p.text || '').join('\n') }));
+    else msgs.push({ role: 'user', content: parts.map(p => p.text || '').join('\n') });
+    let last;
+    for (const model of ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'meta-llama/llama-4-scout-17b-16e-instruct']) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const body = { model, messages: msgs, temperature: 0.2, max_tokens: Math.min(maxTokens, 16000) };
+        if (schema?.type === 'OBJECT') body.response_format = { type: 'json_object' };
+        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', { method: 'POST', signal, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + S.groqKey }, body: JSON.stringify(body) });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok) {
+          const text = j.choices?.[0]?.message?.content || '';
+          if (schema && !this.json(text)) { last = new Error('respuesta no es JSON'); break; }
+          return { text, finish: 'STOP', by: 'groq' };
+        }
+        last = new Error(String(j.error?.message || r.statusText).slice(0, 160));
+        if (r.status === 401) throw new Error('La clave de Groq no es válida.');
+        const wait = Math.min(60, +r.headers.get('retry-after') || 10);
+        if (r.status !== 429 || attempt === 2 || wait > 30) break;
+        onWait?.(`Límite por minuto de Groq; reintento en ${wait} s`); await sleep(wait * 1000);
+      }
+    }
+    throw last || new Error('Groq no respondió.');
   },
 
   async gemApi({ parts, schema, tools, maxTokens = 16000, thinking = 0, media = false, model, signal, onWait, system }) {
@@ -264,7 +298,8 @@ const Engine = {
       schema: this.anSchema, maxTokens: 24000, signal, onWait,
     });
     const j = this.json(r.text);
-    if (!j) throw new Error('No se pudo leer el análisis de Gemini.');
+    if (!j) throw new Error('No se pudo leer el análisis.');
+    j.by = r.by || 'gemini';
     return j;
   },
 

@@ -346,7 +346,7 @@ async function runPipeline(v, src, signal) {
     await saveV(v);
 
     // ---------- 3. análisis ----------
-    step(v, 'Analizando contenido: resumen, capítulos, enlaces, ideas…', 92);
+    step(v, `Analizando con ${S.tx === 'groq' && S.groqKey ? 'Groq' : 'Gemini'}: resumen, capítulos, enlaces, ideas…`, 92);
     try { v.an = await Engine.analyze(v, { signal, onWait }); }
     catch (e) { if (e.name === 'AbortError') throw e; v.anError = e.message; toast('Transcripción lista; el análisis falló: ' + esc(e.message), 'err'); }
     if (v.an?.title && /^(Video de YouTube|[\w.-]+\.\w+)$/.test(v.title)) v.title = v.an.title;
@@ -489,7 +489,7 @@ async function redirectYT(v, id, extra) {
 // Motores de transcripción. El usuario elige uno; si falla, se prueba el siguiente disponible.
 const TX = {
   gemini: { name: 'Gemini', ic: 'sparkle', desc: 'IA completa: hablantes y texto en pantalla. Usa tu cuota de Gemini.' },
-  groq: { name: 'Groq', ic: 'zap', desc: 'Whisper en la nube, ultrarrápido (1 h en ~30 s). Gratis con clave de Groq; solo audio.' },
+  groq: { name: 'Groq', ic: 'zap', desc: 'Whisper en la nube, ultrarrápido (1 h en ~30 s), y análisis con modelos abiertos de Groq. Gratis con clave de Groq.' },
   whisper: { name: 'Whisper Mac', ic: 'cpu', desc: 'Whisper en tu Mac: gratis, sin límites y sin internet. ~3 min por hora de video.', mac: true },
   subs: { name: 'Subtítulos', ic: 'text', desc: 'Subtítulos de YouTube: instantáneo. Si el video no tiene, uso otro motor.', mac: true, ios: true },
   apple: { name: 'Dictado Apple', ic: 'mic', desc: 'Dictado de Apple en el equipo: gratis, precisión básica.', mac: true, ios: true },
@@ -710,7 +710,7 @@ const View = {
         v.duration ? h('span', { html: icon('clock') + fmtT(v.duration) }) : null,
         v.published ? h('span', {}, v.published) : null,
         words ? h('span', {}, words.toLocaleString('es-CL') + ' palabras') : null,
-        TX[v.txEngine] ? h('span', { class: 'txbadge', html: icon(TX[v.txEngine].ic) + 'Transcrito con ' + TX[v.txEngine].name + (v.txSecs ? ` en ${fmtDur(v.txSecs)}` : '') }) : null,
+        TX[v.txEngine] ? h('span', { class: 'txbadge', html: icon(TX[v.txEngine].ic) + 'Transcrito con ' + TX[v.txEngine].name + (v.txSecs ? ` en ${fmtDur(v.txSecs)}` : '') + (v.an?.by ? ' · analizado con ' + (v.an.by === 'groq' ? 'Groq' : 'Gemini') : '') }) : null,
         v.url || v.pageUrl ? h('a', { href: v.pageUrl || v.url, target: '_blank', rel: 'noopener', html: icon('external') + 'Original' }) : null),
       v.an?.tags?.length ? h('div', { class: 'tags' }, v.an.tags.map(t => h('span', { class: 'tag' }, '#' + t))) : null));
   },
