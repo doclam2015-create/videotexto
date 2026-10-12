@@ -1,7 +1,7 @@
 'use strict';
-// Glosa — interfaz: inicio + biblioteca, vista de video con reproductor sincronizado y pestañas de análisis.
+// VideoTexto — interfaz: inicio + biblioteca, vista de video con reproductor sincronizado y pestañas de análisis.
 
-const VERSION = '1.1';
+const VERSION = '1.2';
 const SRC_LABEL = { desc: 'Descripción', pantalla: 'En pantalla', voz: 'Dicho en voz', mencionado: 'Mencionado', 'página': 'Página' };
 const SPK_COLORS = ['#ff7a59', '#7c6cff', '#2ec5a6', '#f5b83d', '#ff5c8a', '#3fa7ff', '#a3d65c', '#c77dff'];
 
@@ -238,7 +238,7 @@ function authFlow(src, found) {
       h('p', {}, `«${domainOf(src.url)}» pide iniciar sesión para ver el video.`),
       native ? h('div', {},
         h('div', { class: 'card' }, h('b', {}, 'Opción 1 · Iniciar sesión en la página'),
-          h('p', { class: 'muted small' }, 'Se abre la página dentro de Glosa; entra con tu cuenta como siempre y luego toca «Listo, continuar». La sesión queda guardada en este Mac.'),
+          h('p', { class: 'muted small' }, 'Se abre la página dentro de VideoTexto; entra con tu cuenta como siempre y luego toca «Listo, continuar». La sesión queda guardada en este Mac.'),
           h('button', { class: 'btn primary', html: icon('external') + 'Abrir la página', onclick: async () => {
             try { const ok = await bridge('login', { url: src.url }); if (ok) finish({ cookies: true }); } catch (e) { toast(esc(e.message || e), 'err'); }
           } })),
@@ -250,7 +250,7 @@ function authFlow(src, found) {
         h('p', { class: 'muted' }, 'En iPhone y iPad las apps web no pueden usar tu sesión de otros sitios. Opciones:'),
         h('ol', {},
           h('li', { html: 'Abre la página, inicia sesión y <b>descarga o guarda el video</b> en Archivos; luego súbelo aquí.' }),
-          h('li', { html: 'O abre el enlace en <b>Glosa para Mac</b>, que sí puede iniciar sesión y descargarlo.' })),
+          h('li', { html: 'O abre el enlace en <b>VideoTexto para Mac</b>, que sí puede iniciar sesión y descargarlo.' })),
         h('div', { class: 'row wrap' },
           h('button', { class: 'btn primary', html: icon('external') + 'Abrir la página', onclick: () => window.open(src.url, '_blank') }),
           h('button', { class: 'btn ghost', html: icon('upload') + 'Subir el video', onclick: () => { finish(null); App.pickFile(); } }))));
@@ -371,7 +371,7 @@ async function runPipeline(v, src, signal) {
 
 function notify(v) {
   if (document.visibilityState === 'visible' || !('Notification' in window) || Notification.permission !== 'granted') return;
-  try { new Notification('Glosa', { body: 'Listo: ' + v.title, icon: 'icon-192.png' }); } catch {}
+  try { new Notification('VideoTexto', { body: 'Listo: ' + v.title, icon: 'icon-192.png' }); } catch {}
 }
 
 async function ytMeta(v, src, signal, onWait) {
@@ -730,7 +730,7 @@ const View = {
       p.append(h('div', { class: 'card warn' },
         h('b', {}, blocked ? 'No se pudo obtener el video' : v.status === 'partial' ? 'Análisis incompleto' : 'Error'),
         h('p', {}, v.error || v.anError || ''),
-        blocked ? h('p', { class: 'muted', html: native ? 'Prueba guardando el video y súbelo con <b>Subir video o audio</b>.' : 'Opciones: abre el enlace en <b>Glosa para Mac</b> (descarga videos de más de 1.000 sitios) o guarda el video en Archivos y usa <b>Subir video o audio</b>.' }) : null,
+        blocked ? h('p', { class: 'muted', html: native ? 'Prueba guardando el video y súbelo con <b>Subir video o audio</b>.' : 'Opciones: abre el enlace en <b>VideoTexto para Mac</b> (descarga videos de más de 1.000 sitios) o guarda el video en Archivos y usa <b>Subir video o audio</b>.' }) : null,
         h('div', { class: 'row' },
           !blocked || native ? h('button', { class: 'btn primary sm', onclick: () => this.reanalyze() }, v.status === 'partial' && v.segments.length ? 'Completar análisis' : 'Reintentar') : null,
           blocked ? h('button', { class: 'btn ghost sm', onclick: () => App.pickFile() }, 'Subir video o audio') : null)));
@@ -1427,7 +1427,7 @@ const App = {
     el.innerHTML = '';
     el.append(
       h('header', { class: 'top glass' },
-        h('div', { class: 'brand' }, h('img', { src: 'icon-192.png', alt: '' }), h('b', {}, 'Glosa')),
+        h('div', { class: 'brand' }, h('img', { src: 'icon-192.png', alt: '' }), h('b', {}, 'VideoTexto')),
         h('span', { class: 'grow' }),
         h('button', { class: 'icon-btn', 'aria-label': 'Ayuda', html: icon('help'), onclick: () => this.help() }),
         h('button', { class: 'icon-btn', 'aria-label': 'Ajustes', html: icon('settings'), onclick: () => this.settings() })),
@@ -1445,7 +1445,7 @@ const App = {
           h('button', { class: 'chip big', html: icon('help') + 'Cómo compartir desde YouTube', onclick: () => this.help('share') })),
         S.key ? null : h('div', { class: 'card setup' },
           h('div', { class: 'setup-ic', html: icon('key') }),
-          h('div', {}, h('b', {}, 'Activa la IA gratis (1 minuto)'), h('p', { class: 'muted' }, 'Glosa usa Gemini de Google, que tiene un nivel gratuito generoso. Solo necesitas pegar tu clave una vez.')),
+          h('div', {}, h('b', {}, 'Activa la IA gratis (1 minuto)'), h('p', { class: 'muted' }, 'VideoTexto usa Gemini de Google, que tiene un nivel gratuito generoso. Solo necesitas pegar tu clave una vez.')),
           h('button', { class: 'btn primary', onclick: () => this.settings() }, 'Configurar'))),
       h('section', { class: 'lib' },
         h('div', { class: 'lib-h' }, h('h2', {}, 'Biblioteca'), h('span', { class: 'grow' }),
@@ -1483,7 +1483,7 @@ const App = {
   },
 
   async pickFile() {
-    if (native) { // en el Mac: selector nativo; el archivo se copia a la carpeta de Glosa y se sirve localmente
+    if (native) { // en el Mac: selector nativo; el archivo se copia a la carpeta de VideoTexto y se sirve localmente
       try { const r = await bridge('pickfile'); if (r) this.nativeFile(r); } catch (e) { toast(esc(e.message || e), 'err'); }
       return;
     }
@@ -1597,7 +1597,7 @@ const App = {
         field('Modelo', sel('model', [['gemini-flash-latest', 'Gemini Flash — recomendado (rápido y preciso)'], ['gemini-flash-lite-latest', 'Gemini Flash-Lite — más rápido y con más cuota'], ['gemini-pro-latest', 'Gemini Pro — máxima calidad (cuota menor)']])),
         field('Idioma de resúmenes y chat', sel('lang', Object.entries(LANGS).map(([c, n]) => [c, n[0].toUpperCase() + n.slice(1)])))),
       h('section', {}, h('h3', { html: icon('text') + ' Transcripción' }),
-        field('Motor de transcripción', sel('tx', txList().map(k => [k, TX[k].name + ' — ' + TX[k].desc])), 'También se elige en la pantalla de inicio. Si el motor falla, Glosa prueba el siguiente disponible.'),
+        field('Motor de transcripción', sel('tx', txList().map(k => [k, TX[k].name + ' — ' + TX[k].desc])), 'También se elige en la pantalla de inicio. Si el motor falla, VideoTexto prueba el siguiente disponible.'),
         field('Clave de Groq (gratis)', h('div', { class: 'row' }, gkey, h('button', { class: 'btn ghost sm', onclick: () => { gkey.type = gkey.type === 'password' ? 'text' : 'password'; } }, 'Ver'), h('button', { class: 'btn primary sm', onclick: gtest }, 'Guardar')),
           '1) Entra a <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> · 2) «Create API Key» · 3) Pégala aquí. Se guarda solo en este dispositivo.'),
         gMsg,
@@ -1620,7 +1620,7 @@ const App = {
           h('button', { class: 'btn ghost sm', html: icon('upload') + 'Importar', onclick: () => { const i = h('input', { type: 'file', accept: '.json,application/json', onchange: async () => { try { const arr = JSON.parse(await i.files[0].text()); for (const v of arr) if (v.id && v.segments) await DB.put('videos', v); toast(`${arr.length} videos importados`); this.renderLib(); } catch { toast('Archivo no válido', 'err'); } } }); i.click(); } }),
           h('button', { class: 'btn danger sm', html: icon('trash') + 'Borrar todo', onclick: async () => { if (await confirmBox('Se borrará toda la biblioteca de este dispositivo.', 'Borrar todo', true)) { await DB.clear('videos'); await DB.clear('blobs'); this.renderLib(); toast('Biblioteca vacía'); } } })),
         usage ? h('p', { class: 'muted small' }, `Hoy: ${usage.n} solicitudes a Gemini · ${(usage.in / 1000).toFixed(0)} mil tokens de entrada · ${(usage.out / 1000).toFixed(0)} mil de salida.`) : null,
-        h('p', { class: 'muted small' }, `Glosa ${VERSION} ${native ? '· Mac' : ''} · Tus videos y tu clave se guardan solo en este dispositivo.`)));
+        h('p', { class: 'muted small' }, `VideoTexto ${VERSION} ${native ? '· Mac' : ''} · Tus videos y tu clave se guardan solo en este dispositivo.`)));
     sheet('Ajustes', body);
   },
 
@@ -1631,26 +1631,26 @@ const App = {
       h('h3', { id: 'h-share' }, 'Compartir un video desde el iPhone o iPad'),
       h('ol', {},
         h('li', { html: 'En la app de YouTube toca <b>Compartir › Copiar enlace</b>.' }),
-        h('li', { html: 'Abre Glosa y toca <b>Pegar</b>: el análisis empieza solo.' })),
-      h('p', { class: 'muted', html: 'Instala Glosa en tu pantalla de inicio: en Safari toca <b>Compartir › Añadir a pantalla de inicio</b>. Se abre como una app, sin barras del navegador y funciona sin conexión para leer tu biblioteca.' }),
+        h('li', { html: 'Abre VideoTexto y toca <b>Pegar</b>: el análisis empieza solo.' })),
+      h('p', { class: 'muted', html: 'Instala VideoTexto en tu pantalla de inicio: en Safari toca <b>Compartir › Añadir a pantalla de inicio</b>. Se abre como una app, sin barras del navegador y funciona sin conexión para leer tu biblioteca.' }),
       h('h3', {}, 'Atajo para la hoja de compartir (opcional)'),
       h('ol', {},
         h('li', { html: 'App <b>Atajos</b> › <b>+</b> › activa «Mostrar en hoja de compartir» y acepta <b>URL</b>.' }),
         h('li', { html: 'Añade «<b>Codificar URL</b>» con la entrada del atajo.' }),
         h('li', { html: `Añade «<b>Abrir URL</b>» con: <code>${esc(base)}?u=</code> seguido de la URL codificada.` })),
-      h('p', { class: 'muted', html: 'El atajo abre Glosa en Safari (iOS no permite abrir directamente la app de pantalla de inicio); la biblioteca de Safari y la de la app instalada son independientes.' }),
+      h('p', { class: 'muted', html: 'El atajo abre VideoTexto en Safari (iOS no permite abrir directamente la app de pantalla de inicio); la biblioteca de Safari y la de la app instalada son independientes.' }),
       h('h3', {}, 'En el Mac'),
-      h('p', { html: 'La app <b>Glosa para Mac</b> descarga videos de más de 1.000 sitios (Vimeo, X, Instagram, TikTok, noticias…) con <code>yt-dlp</code>, usa subtítulos oficiales si lo eliges y guarda directo en tu bóveda de Obsidian. <b>⌘⇧V</b> analiza el enlace copiado.' }),
+      h('p', { html: 'La app <b>VideoTexto para Mac</b> descarga videos de más de 1.000 sitios (Vimeo, X, Instagram, TikTok, noticias…) con <code>yt-dlp</code>, usa subtítulos oficiales si lo eliges y guarda directo en tu bóveda de Obsidian. <b>⌘⇧V</b> analiza el enlace copiado.' }),
       h('p', {}, 'Marcador para cualquier navegador (arrástralo a tu barra de favoritos):'),
-      h('p', {}, h('a', { class: 'btn ghost sm', href: bm }, 'Analizar con Glosa')),
+      h('p', {}, h('a', { class: 'btn ghost sm', href: bm }, 'Analizar con VideoTexto')),
       h('h3', {}, 'Páginas web con video'),
-      h('p', { html: 'Pega el enlace de la página: Glosa lee la página, encuentra el video (YouTube o Vimeo incrustado, archivos MP4) y lo transcribe. Si el sitio bloquea la descarga en el iPad, usa el Mac o guarda el video y <b>súbelo</b>.' }),
+      h('p', { html: 'Pega el enlace de la página: VideoTexto lee la página, encuentra el video (YouTube o Vimeo incrustado, archivos MP4) y lo transcribe. Si el sitio bloquea la descarga en el iPad, usa el Mac o guarda el video y <b>súbelo</b>.' }),
       h('h3', {}, 'Atajos de teclado'),
       h('div', { class: 'keys' }, [['Espacio / K', 'Reproducir o pausar'], ['J / L', '−10 s / +10 s'], ['← / →', '−5 s / +5 s'], ['/', 'Buscar en la transcripción'], ['1 – 9', 'Cambiar de pestaña'], ['⌘K', 'Nuevo enlace'], ['Esc', 'Volver']].map(([k, d]) => h('div', {}, h('kbd', {}, k), h('span', {}, d)))),
       h('h3', {}, 'Costo'),
-      h('p', { html: 'Glosa es gratuita. La IA usa el <b>nivel gratuito de Gemini</b> de Google: alcanza para varios videos largos al día. Si algún día necesitas más, puedes activar facturación en AI Studio (centavos de dólar por hora de video).' }),
+      h('p', { html: 'VideoTexto es gratuita. La IA usa el <b>nivel gratuito de Gemini</b> de Google: alcanza para varios videos largos al día. Si algún día necesitas más, puedes activar facturación en AI Studio (centavos de dólar por hora de video).' }),
       h('h3', {}, 'Privacidad'),
-      h('p', {}, 'No hay servidores de Glosa: tu biblioteca y tu clave se guardan en tu dispositivo, y el video solo se envía a Google Gemini para transcribirlo.'));
+      h('p', {}, 'No hay servidores de VideoTexto: tu biblioteca y tu clave se guardan en tu dispositivo, y el video solo se envía a Google Gemini para transcribirlo.'));
     sheet('Ayuda', body, { wide: true });
     if (section) setTimeout(() => $('#h-' + section)?.scrollIntoView(), 50);
   },

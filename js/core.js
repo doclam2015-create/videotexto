@@ -1,5 +1,5 @@
 'use strict';
-// Glosa — utilidades base: almacenamiento (IndexedDB), ajustes, interfaz y puente con la app de Mac.
+// VideoTexto — utilidades base: almacenamiento (IndexedDB), ajustes, interfaz y puente con la app de Mac.
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];

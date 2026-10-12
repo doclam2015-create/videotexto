@@ -1,5 +1,5 @@
 'use strict';
-// Glosa — motor: detecta la fuente, obtiene metadatos, transcribe por fragmentos en paralelo con Gemini
+// VideoTexto — motor: detecta la fuente, obtiene metadatos, transcribe por fragmentos en paralelo con Gemini
 // (video + audio, incluido el texto en pantalla) y genera el análisis a partir de la transcripción.
 
 const API = 'https://generativelanguage.googleapis.com';

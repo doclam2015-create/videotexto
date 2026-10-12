@@ -1,6 +1,6 @@
 {
-  "name": "Glosa — transcribe y analiza videos",
-  "short_name": "Glosa",
+  "name": "VideoTexto — transcribe y analiza videos",
+  "short_name": "VideoTexto",
   "description": "Transcripción completa, enlaces, resumen, capítulos y chat de videos de YouTube, páginas web y archivos.",
   "start_url": "./",
   "scope": "./",

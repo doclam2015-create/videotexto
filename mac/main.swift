@@ -4,7 +4,7 @@ import Network
 import UniformTypeIdentifiers
 import Speech
 
-// Glosa para macOS: ventana nativa con WKWebView. La interfaz se sirve desde un pequeño servidor local
+// VideoTexto para macOS: ventana nativa con WKWebView. La interfaz se sirve desde un pequeño servidor local
 // (http://127.0.0.1:47613) para que los reproductores de YouTube funcionen, y habla con el Mac por
 // window.webkit.messageHandlers.glosa: yt-dlp (descargas de cualquier sitio, listas, subtítulos),
 // inicio de sesión en sitios, guardar archivos, Obsidian e imprimir.
@@ -220,7 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1380, height: 900),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-        window.title = "Glosa"
+        window.title = "VideoTexto"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.minSize = NSSize(width: 420, height: 560)
@@ -236,7 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    // videos arrastrados al ícono del Dock o abiertos con «Abrir con › Glosa»
+    // videos arrastrados al ícono del Dock o abiertos con «Abrir con › VideoTexto»
     func application(_ application: NSApplication, open urls: [URL]) {
         for u in urls where u.isFileURL {
             DispatchQueue.global().async {
@@ -461,7 +461,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let sem0 = DispatchSemaphore(value: 0); var status = SFSpeechRecognizerAuthorizationStatus.notDetermined
         SFSpeechRecognizer.requestAuthorization { st in status = st; sem0.signal() }
         sem0.wait()
-        guard status == .authorized else { throw NSError(domain: "glosa", code: 4, userInfo: [NSLocalizedDescriptionKey: "Permite el Reconocimiento de voz para Glosa en Ajustes del Sistema › Privacidad y seguridad."]) }
+        guard status == .authorized else { throw NSError(domain: "glosa", code: 4, userInfo: [NSLocalizedDescriptionKey: "Permite el Reconocimiento de voz para VideoTexto en Ajustes del Sistema › Privacidad y seguridad."]) }
         let locales = (lang.hasPrefix("en") ? ["en-US", "en-GB"] : lang.hasPrefix("pt") ? ["pt-BR", "pt-PT"] : lang.hasPrefix("fr") ? ["fr-FR"] : lang.hasPrefix("de") ? ["de-DE"] : lang.hasPrefix("it") ? ["it-IT"] : ["es-CL", "es-ES", "es-MX", "es-US"])
         guard let rec = locales.compactMap({ SFSpeechRecognizer(locale: Locale(identifier: $0)) }).first(where: { $0.isAvailable }) else {
             throw NSError(domain: "glosa", code: 5, userInfo: [NSLocalizedDescriptionKey: "El reconocimiento de voz para «\(lang)» no está disponible en este Mac."])
@@ -545,7 +545,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
     }
 
-    // Copia (o enlaza) un archivo del usuario a la carpeta de Glosa para servirlo y procesarlo
+    // Copia (o enlaza) un archivo del usuario a la carpeta de VideoTexto para servirlo y procesarlo
     static func importMedia(_ u: URL) throws -> [String: Any] {
         let ext = u.pathExtension.isEmpty ? "mp4" : u.pathExtension.lowercased()
         let dest = mediaDir.appendingPathComponent("local-\(UUID().uuidString.prefix(8)).\(ext)")
@@ -654,12 +654,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let bar = NSMenu()
         let appItem = NSMenuItem(); bar.addItem(appItem)
         let am = NSMenu()
-        am.addItem(withTitle: "Acerca de Glosa", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        am.addItem(withTitle: "Acerca de VideoTexto", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         am.addItem(.separator())
         am.addItem(item("Ajustes…", "App.settings()", ","))
         am.addItem(.separator())
-        am.addItem(withTitle: "Ocultar Glosa", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        am.addItem(withTitle: "Salir de Glosa", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        am.addItem(withTitle: "Ocultar VideoTexto", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        am.addItem(withTitle: "Salir de VideoTexto", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = am
 
         let fItem = NSMenuItem(); bar.addItem(fItem)
@@ -707,7 +707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
         let hItem = NSMenuItem(); bar.addItem(hItem)
         let hm = NSMenu(title: "Ayuda")
-        hm.addItem(item("Ayuda de Glosa", "App.help()", "?"))
+        hm.addItem(item("Ayuda de VideoTexto", "App.help()", "?"))
         hItem.submenu = hm
         NSApp.helpMenu = hm
         NSApp.mainMenu = bar

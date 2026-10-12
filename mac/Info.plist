@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Glosa</string>
-  <key>CFBundleDisplayName</key><string>Glosa</string>
+  <key>CFBundleName</key><string>VideoTexto</string>
+  <key>CFBundleDisplayName</key><string>VideoTexto</string>
   <key>CFBundleIdentifier</key><string>cl.doclam.glosa</string>
-  <key>CFBundleExecutable</key><string>Glosa</string>
+  <key>CFBundleExecutable</key><string>VideoTexto</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
@@ -15,13 +15,13 @@
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSPrincipalClass</key><string>NSApplication</string>
-  <key>NSSpeechRecognitionUsageDescription</key><string>Glosa transcribe el audio de los videos en este Mac cuando la API de Gemini no está disponible.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>VideoTexto transcribe el audio de los videos en este Mac cuando la API de Gemini no está disponible.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
   <key>CFBundleDocumentTypes</key>
   <array><dict><key>CFBundleTypeName</key><string>Video o audio</string><key>CFBundleTypeRole</key><string>Viewer</string><key>LSHandlerRank</key><string>Alternate</string>
     <key>LSItemContentTypes</key><array><string>public.movie</string><string>public.audio</string></array></dict></array>
   <key>CFBundleURLTypes</key>
-  <array><dict><key>CFBundleURLName</key><string>Glosa</string><key>CFBundleURLSchemes</key><array><string>glosa</string></array></dict></array>
+  <array><dict><key>CFBundleURLName</key><string>VideoTexto</string><key>CFBundleURLSchemes</key><array><string>glosa</string></array></dict></array>
   <key>NSHumanReadableCopyright</key><string>Dr. Marcelo Lam · 2026 · Uso personal, no comercial</string>
 </dict>
 </plist>

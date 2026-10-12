@@ -1,8 +1,8 @@
 #!/bin/zsh
-# Compila Glosa.app, genera los íconos (Mac, iPad/iPhone y web), la instala en /Applications y la deja en el Dock
+# Compila VideoTexto.app, genera los íconos (Mac, iPad/iPhone y web), la instala en /Applications y la deja en el Dock
 set -e
 cd "$(dirname "$0")/.."
-B=build; APP="${TMPDIR:-/tmp}/glosa-build/Glosa.app"; mkdir -p "$(dirname "$APP")" "$B"
+B=build; APP="${TMPDIR:-/tmp}/glosa-build/VideoTexto.app"; mkdir -p "$(dirname "$APP")" "$B"
 swiftc -O mac/icon.swift -o "$B/icongen" && "$B/icongen" "$B"
 sips -z 180 180 "$B/icon-ios-1024.png" --out apple-touch-icon.png >/dev/null
 sips -z 192 192 "$B/icon-ios-1024.png" --out icon-192.png >/dev/null
@@ -14,19 +14,19 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$B/AppIcon.iconset" -o "$B/AppIcon.icns"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O mac/main.swift -o "$APP/Contents/MacOS/Glosa" -target arm64-apple-macos13.0
+swiftc -O mac/main.swift -o "$APP/Contents/MacOS/VideoTexto" -target arm64-apple-macos13.0
 cp mac/Info.plist "$APP/Contents/Info.plist"
 cp index.html manifest.webmanifest icon-192.png icon-512.png apple-touch-icon.png "$APP/Contents/Resources/"
 cp -R js css "$APP/Contents/Resources/"
 cp "$B/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 xattr -cr "$APP"
 codesign --force --deep --sign - "$APP"
-pkill -x Glosa 2>/dev/null || true
-rm -rf "/Applications/Glosa.app"
+pkill -x VideoTexto 2>/dev/null || true; pkill -x Glosa 2>/dev/null || true; rm -rf "/Applications/Glosa.app" # nombre anterior
+rm -rf "/Applications/VideoTexto.app"
 cp -R "$APP" /Applications/
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Glosa.app
-if ! defaults read com.apple.dock persistent-apps | grep -q "Glosa.app"; then
-  defaults write com.apple.dock persistent-apps -array-add "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file:///Applications/Glosa.app/</string><key>_CFURLStringType</key><integer>15</integer></dict></dict></dict>"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/VideoTexto.app
+if ! defaults read com.apple.dock persistent-apps | grep -q "VideoTexto.app"; then
+  defaults write com.apple.dock persistent-apps -array-add "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file:///Applications/VideoTexto.app/</string><key>_CFURLStringType</key><integer>15</integer></dict></dict></dict>"
   killall Dock
 fi
-echo "Instalada en /Applications/Glosa.app"
+echo "Instalada en /Applications/VideoTexto.app"
